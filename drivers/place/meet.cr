@@ -298,8 +298,12 @@ class Place::Meet < PlaceOS::Driver
 
   @default_routes : Hash(String, String) = {} of String => String
 
+  #routes for toggling participants on zoom room 
+  @participant_routes : Hash(String, String) = {} of String => String
+
   protected def init_signal_routing
     @default_routes = setting?(Hash(String, String), :default_routes) || {} of String => String
+    @participant_routes = setting?(Hash(String, String), :participant_routes) || {} of String => String
 
     logger.debug { "loading signal graph..." }
     load_siggraph
@@ -328,6 +332,12 @@ class Place::Meet < PlaceOS::Driver
     @default_routes.each { |output, input| route_signal(input, output) }
   rescue error
     logger.warn(exception: error) { "error applying default routes" }
+  end
+
+  def apply_participant_routes
+    @participant_routes.each { |output, input| route_signal(input, output) }
+  rescue error
+    logger.warn(exception: error) { "error applying participant routes" }
   end
 
   @[Description("available inputs and outputs. Route using id keys")]
