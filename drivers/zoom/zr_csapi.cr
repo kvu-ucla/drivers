@@ -149,7 +149,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     end
     current_booking = bookings.find do |booking|
       next if booking["isInstantMeeting"] == true
-      booking["startTime"] > @current_time
+      booking["startTime"].as_i64 > @current_time
     end
 
     self[:current_booking] = current_booking
@@ -171,7 +171,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
       current_start_time = current_booking["startTime"]
       next_booking = bookings.find do |booking|
         next if booking["isInstantMeeting"] == true
-        booking["startTime"] > current_start_time
+        booking["startTime"].as_i64 > current_start_time
       end
     else
       next_booking = nil
