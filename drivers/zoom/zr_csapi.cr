@@ -22,6 +22,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   getter? ready : Bool = false
   @debug_enabled : Bool = false
   @response_delay : Int32 = 500
+  @current_time : Int64 = Time.utc.to_unix
 
   def on_load
     queue.wait = false
@@ -33,6 +34,18 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   def on_update
     @debug_enabled = setting?(Bool, :enable_debug_logging) || false
     @response_delay = setting?(Int32, :milliseconds_until_response) || 500
+    
+    schedule.cron("* * * * *") do
+      schedule.in(rand(1000).milliseconds) do
+        @current_time = Time.utc.to_unix
+        if list = self[:Bookings]?
+          determine_current_booking(list.as_a)
+          determine_next_booking(list.as_a)
+          determine_active_booking(list.as_a)
+        end
+      end
+    end
+
   end
 
   def connected
@@ -60,6 +73,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   end
 
   def fetch_initial_state
+    update_current_time
     bookings_update
     call_status
   end 
@@ -76,16 +90,107 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     self["BookingsListResult"]
   end
 
+  def update_current_time
+  self[:current_time] = @current_time
+  end
+
+  # Expose custom booking JSON, filter meetings whose meetingNumber == 0 (invalid)
+  # filter meetings whose endTime has already passed (completely finished)
   private def expose_custom_bookings_list
     bookings = self["BookingsListResult"]?
     return unless bookings
-    self[:Bookings] = bookings.as_a.map { |b| b.as_h.select(
-      "creatorName",
-      "startTime",
-      "endTime",
-      "meetingName",
-      "meetingNumber"
-    )}
+    
+    # Get current time as unix timestamp for filtering
+    update_current_time
+    
+    self[:Bookings] = bookings.as_a.compact_map { |b| 
+      booking_hash = b.as_h
+      
+      # convert from ISO8601 to unix timestamps, check if has valid end and start times before processing
+      start_time_iso = booking_hash["startTime"]?.try(&.as_s)
+      end_time_iso = booking_hash["endTime"]?.try(&.as_s)
+      
+      next unless start_time_iso && end_time_iso
+      
+      begin
+        start_time_unix = Time.parse_iso8601(start_time_iso).to_unix
+        end_time_unix = Time.parse_iso8601(end_time_iso).to_unix
+        
+        # Filter out bookings whose end time has already elapsed
+        next if end_time_unix < @current_time
+        
+        # Filter out entries whose meeting number is "0" (i.e. meetings from Outlook that have no Zoom meeting)
+        meeting_number = booking_hash["meetingNumber"]?
+        next if meeting_number == "0"
+        
+        # Return booking with converted unix timestamps
+        {
+          "creatorName" => booking_hash["creatorName"]?,
+          "startTime" => start_time_unix,
+          "endTime" => end_time_unix,
+          "meetingName" => booking_hash["meetingName"]?,
+          "meetingNumber" => booking_hash["meetingNumber"]?,
+          "isInstantMeeting" => booking_hash["isInstantMeeting"]?
+        }
+      rescue Time::Format::Error
+        # Skip bookings with invalid time formats
+        next
+      end
+    }.compact
+  end
+
+    # determine current booking, i.e. booking that is closest to current time
+  private def determine_current_booking(bookings : Array(JSON::Any))
+    if bookings.empty?
+      self[:current_booking] = nil
+      self[:booking_in_progress] = false
+      return
+    end
+    current_booking = bookings.find do |booking|
+      is_instant_meeting = booking["isInstantMeeting"]
+      next if is_instant_meeting
+      booking["startTime"].as_i64 <= @current_time && booking["endTime"].as_i64 > @current_time
+    end
+    
+    self[:current_booking] = current_booking || nil
+    self[:booking_in_progress] = !current_booking.nil?
+  end
+
+  # determine next booking, i.e. booking that is directly after current booking
+  # assumes the Zoom bookings are sorted by start time, which the case after transforming
+  private def determine_next_booking(bookings : Array(JSON::Any))
+    if bookings.empty?
+      self[:next_booking] = nil
+      return
+    end
+    next_booking = bookings.find do |booking|
+      is_instant_meeting = booking["isInstantMeeting"]
+      next if is_instant_meeting
+      booking["startTime"].as_i64 > @current_time
+    end
+    self[:next_booking] = next_booking || nil
+  end
+
+  #determine the if the booking is active and in call, either instant or from schedule
+  private def determine_active_booking(bookings : Array(JSON::Any))
+    if bookings.empty?
+      self[:active_booking] = nil
+      return
+    end
+
+    # Get the current meeting id during active call
+    active_meeting_id = self["InfoResult"]["meeting_id"]?
+    
+    if active_meeting_id
+      # Find the booking that matches the active meeting
+      active_booking = bookings.find do |booking|
+        booking["meetingNumber"] == active_meeting_id
+      end
+      
+      self[:active_booking] = active_booking
+    else
+      self[:active_booking] = nil
+    end
   end
 
   # Update/refresh the meeting list from calendar
@@ -119,7 +224,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   end
 
   # Start PMI meeting
-  def dial_start_pmi(duration_minutes : Int32 = 15)
+  def dial_start_pmi(duration_minutes : Int32 = 1)
     command = "zCommand Dial StartPmi Duration: #{duration_minutes}"
     do_send(command, name: "dial_start_pmi")
     sleep @response_delay.milliseconds
@@ -141,10 +246,16 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     do_send("zCommand Call Invite user: #{user}", name: "call_invite")
   end
 
-  # Mute/unmute specific participant
-  def call_mute_participant(mute : Bool, participant_id : String)
+  # Mute/unmute specific participant audio
+  def call_mute_participant_audio (mute : Bool, participant_id : String)
     state = mute ? "on" : "off"
-    do_send("zCommand Call MuteParticipant mute: #{state} Id: #{participant_id}", name: "call_mute_participant")
+    do_send("zCommand Call MuteParticipant mute: #{state} Id: #{participant_id}", name: "call_mute_participant_audio")
+  end
+
+    # Mute/unmute specific participant video
+  def call_mute_participant_video (mute : Bool, participant_id : String)
+    state = mute ? "on" : "off"
+    do_send("zCommand Call MuteParticipantVideo mute: #{state} Id: #{participant_id}", name: "call_mute_participant_video")
   end
 
   # Mute/unmute all participants
@@ -325,13 +436,17 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     sleep @response_delay.milliseconds
     self["ListParticipantsResult"]
   end
-
+ 
+  #Expose ListParticipantsResult in a more easily read and usable format
   private def expose_custom_participant_list
     participants = self["ListParticipantsResult"]?
     return unless participants
+    
     participants_array = participants.as_a
     self[:number_of_participants] = participants_array.size
-    self[:Participants] = participants_array.map { |p| p.as_h.select(
+    
+    # selected participants
+    selected_participants = participants_array.map { |p| p.as_h.select(
       "user_id",
       "user_name",
       "audio_status state",
@@ -342,13 +457,36 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
       "is_in_waiting_room",
       "hand_status"
     )}
+    
+    # transform
+    self[:Participants] = selected_participants.map do |participant|
+      {
+        "user_id" => participant["user_id"],
+        "user_name" => participant["user_name"],
+        "audio_state" => participant["audio_status state"],
+        "video_has_source" => participant["video_status has_source"],
+        "video_is_sending" => participant["video_status is_sending"],
+        "isCohost" => participant["isCohost"],
+        "is_host" => participant["is_host"],
+        "is_in_waiting_room" => participant["is_in_waiting_room"],
+        "hand_status" => participant["hand_status"]
+      }
+    end
   end
 
+  # custom call state for call status, mic mute status, cam status
   private def expose_custom_call_state
     return unless call = self[:Call]
-    logger.debug { "Call state changed to #{call.inspect}" } if @debug_enabled
+    
     call_state = call.dig?("Status")
     self[:in_call] = call_state.as_s? == "IN_MEETING" if call_state
+    
+    mic_state = call.dig?("Microphone", "Mute")
+    self[:mic_mute] = mic_state.as_bool? if mic_state
+
+    cam_state = call.dig?("Camera", "Mute")
+    self[:cam_mute] = cam_state.as_bool? if cam_state
+
   end
 
   # Get audio input devices
@@ -636,7 +774,50 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
       self[response_topkey] = json_response[response_topkey]
     end
 
-    # Perform additional actions
+    # topkey response
+    case response_topkey
+    when "Call"
+      expose_custom_call_state
+    when "ListParticipantsResult"
+      begin
+        list = json_response["ListParticipantsResult"]
+        event = nil
+        
+        # Handle different data structures correctly
+        if list.as_a?
+          # if response is array, use first participant
+          first_participant = list.as_a.first?
+          if first_participant && first_participant.as_h?
+            event_value = first_participant.as_h["event"]?
+            event = event_value.try(&.as_s) if event_value
+          end
+        elsif list.as_h?
+          # It's a single hash (automatic event), get event directly
+          event_value = list.as_h["event"]?
+          event = event_value.try(&.as_s) if event_value
+        end
+        
+        
+        # Event is either None or ZRCUSerChangedEvent, indicating a change
+        if event == "None" && list.as_a?
+          # Manual query response - process the participant list
+          logger.info { "Processing manual query response" }
+          expose_custom_participant_list
+        elsif event && event.starts_with?("ZRCUserChangedEvent")
+          # refresh
+          call_list_participants
+        end
+        
+      rescue ex
+        logger.error { "Error processing ListParticipantsResult: #{ex.message}" }
+      end
+    when "InfoResult"
+      if bookings = self[:Bookings]?
+        determine_active_booking(bookings.as_a)
+      end  
+    end
+
+    # other response types
     case response_type
     when "zEvent"
       case response_topkey
@@ -650,10 +831,6 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
       end
     when "zConfiguration"
     when "zCommand"
-      case response_topkey
-      when "ListParticipantsResult"
-        expose_custom_participant_list
-      end
     end
   end
 
