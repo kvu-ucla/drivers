@@ -23,9 +23,6 @@ class Place::Meet < PlaceOS::Driver
     and integrations found within common workplace collaboration spaces
     DESC
 
-  default_settings({
-  })
-
   class ChannelDetail
     include JSON::Serializable
 
