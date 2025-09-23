@@ -168,7 +168,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
 
     if current_booking
       # Find the meeting that starts after current booking
-      current_start_time = current_booking["startTime"]
+      current_start_time = current_booking["startTime"].as_i64
       next_booking = bookings.find do |booking|
         next if booking["isInstantMeeting"] == true
         booking["startTime"].as_i64 > current_start_time
