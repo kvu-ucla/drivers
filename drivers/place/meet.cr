@@ -177,7 +177,7 @@ class Place::Meet < PlaceOS::Driver
       apply_default_routes
       apply_mic_defaults
       apply_dsp_defaults(1)
-      apply_camera_autoframing(true)
+      system["Camera_1"].autoframe(true)
 
       if first_output = @tabs.first?.try &.inputs.first
         selected_input first_output
@@ -187,6 +187,7 @@ class Place::Meet < PlaceOS::Driver
       audio_mute(true) rescue nil
       apply_dsp_defaults(2)
       apply_camera_autoframing(false)
+      system["ZoomCSAPI_1"].call_disconnect
 
       @local_outputs.each { |output| unroute(output) }
       @local_preview_outputs.each { |output| unroute(output) }
