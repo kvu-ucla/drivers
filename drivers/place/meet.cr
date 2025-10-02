@@ -79,6 +79,8 @@ class Place::Meet < PlaceOS::Driver
   @unjoin_on_shutdown : Bool? = nil
   @mute_on_unlink : Bool = true
   @auto_route_on_join : Bool = false
+  DEFAULT_DSP_MOD = "Mixer_1"
+  @mixer_module : String = DEFAULT_DSP_MOD
 
   # core includes: 'current_routes' hash
   # but we override it here for LLM integration
@@ -174,6 +176,8 @@ class Place::Meet < PlaceOS::Driver
       apply_camera_defaults
       apply_default_routes
       apply_mic_defaults
+      apply_dsp_defaults(1)
+      apply_camera_autoframing(true)
 
       if first_output = @tabs.first?.try &.inputs.first
         selected_input first_output
@@ -181,6 +185,8 @@ class Place::Meet < PlaceOS::Driver
     else
       unlink_systems if unlink
       audio_mute(true) rescue nil
+      apply_dsp_defaults(2)
+      apply_camera_autoframing(false)
 
       @local_outputs.each { |output| unroute(output) }
       @local_preview_outputs.each { |output| unroute(output) }
@@ -260,6 +266,21 @@ class Place::Meet < PlaceOS::Driver
     @participant_routes.each { |output, input| route_signal(input, output) }
   rescue error
     logger.warn(exception: error) { "error applying participant routes" }
+  end
+
+  def apply_dsp_defaults(preset : Int32)
+    dsp = system[DEFAULT_DSP_MOD]
+    dsp.set_preset(preset)
+  rescue error
+    logger.warn(exception: error) { "error applying dsp default preset: #{preset}" }
+  end
+
+  def apply_camera_autoframing(state : Bool)
+    system.all(:Camera).each do |camera|
+      camera.autoframe(state)
+    rescue error
+        logger.warn(exception: error) { "error applying autoframing for: #{camera}" }
+    end
   end
 
   @[Description("available inputs and outputs. Route using id keys")]
