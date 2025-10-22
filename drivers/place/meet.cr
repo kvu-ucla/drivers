@@ -174,7 +174,8 @@ class Place::Meet < PlaceOS::Driver
       @local_preview_outputs.each { |device| sys[device].power true } # Power on preview displays
       apply_master_audio_default
       apply_camera_defaults
-      apply_default_routes
+      # the reason for this as when linking, the current routes are applied to the remote room
+      apply_default_routes unless linked?
       apply_mic_defaults
       apply_dsp_defaults(1)
       system["Camera_1"].autoframe(true)
@@ -1349,8 +1350,11 @@ class Place::Meet < PlaceOS::Driver
         select_lighting_scene(@light_scenes.keys.first)
       end
 
-      # send the current input to the remote rooms
-      if @auto_route_on_join && master
+      if !mode.linked?
+        # unroute on unlink
+        unroute_all
+      elsif @auto_route_on_join && master
+        # send the current input to the remote rooms
         begin
           if selected_inp = status?(String, :selected_input)
             @outputs.each do |outp|
@@ -1449,19 +1453,25 @@ class Place::Meet < PlaceOS::Driver
       if mode = @join_modes[selected]
         this_room = config.control_system.not_nil!.id
         if mode.room_ids.includes? this_room
-          mode.room_ids.compact_map do |room|
+          remotes = mode.room_ids.compact_map do |room|
             next if room == this_room
             RemoteSystem.new(room, system(room).get("System", 1))
           end
-        else
-          [] of RemoteSystem
+          return remotes
         end
-      else
-        [] of RemoteSystem
       end
-    else
-      [] of RemoteSystem
     end
+    [] of RemoteSystem
+  end
+
+  def linked? : Bool
+    if selected = @join_selected
+      if mode = @join_modes[selected]
+        this_room = config.control_system.not_nil!.id
+        return mode.room_ids.includes?(this_room)
+      end
+    end
+    false
   end
 
   # cache the proxies for performance reasons
