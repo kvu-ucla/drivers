@@ -3,6 +3,7 @@
 # Device Models: Pearl-2, Pearl Mini
 # Protocol: HTTP/HTTPS REST API with Basic Authentication
 
+
 require "placeos-driver"
 require "./pearl_models"
 
