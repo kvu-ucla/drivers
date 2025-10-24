@@ -224,7 +224,7 @@ class Epiphan::Pearl < PlaceOS::Driver
   end
 
   def get_ndi_status
-    response = get("api/v2.0/inputs?types=ndi")
+    response = get("/api/v2.0/inputs?types=ndi")
     raise "Failed to get NDI video status: #{response.status_code}" unless response.success?
     
     status_response = Epiphan::PearlModels::NdiStatusResponse.from_json(response.body.not_nil!)
