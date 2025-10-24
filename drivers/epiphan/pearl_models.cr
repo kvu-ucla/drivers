@@ -45,6 +45,17 @@ module Epiphan::PearlModels
     getter total : String?   # Total number of recordings as string (optional)
   end
 
+  # Represents the status of NDI inputs
+  class NdiStatus
+    include JSON::Serializable
+    
+    getter id: String?
+    getter real_device_name: String?
+    getter audio: Bool?
+    getter video: Bool?
+    getter type: String?
+  end  
+
   # Represents a streaming channel
   class Channel
     include JSON::Serializable
@@ -116,4 +127,5 @@ module Epiphan::PearlModels
   alias LayoutsResponse = ApiResponse(Array(Layout))
   alias PublishersResponse = ApiResponse(Array(Publisher))
   alias SystemStatusResponse = ApiResponse(SystemStatus)
+  alias NdiStatusResponse = ApiResponse(Array(NdiStatus))
 end
