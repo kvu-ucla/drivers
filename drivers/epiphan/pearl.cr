@@ -231,7 +231,9 @@ class Epiphan::Pearl < PlaceOS::Driver
     raise "API returned error: #{status_response.status}" unless status_response.status == "ok"
 
     ndi_status = status_response.result
-    self[:ndi_status] = ndi_status
+    status_response.result.each do |input|
+      self["#{input.id}_video_status"] = input.video
+    end
     ndi_status
   end
 
