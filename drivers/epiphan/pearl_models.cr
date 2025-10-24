@@ -49,11 +49,11 @@ module Epiphan::PearlModels
   class NdiStatus
     include JSON::Serializable
     
-    getter id: String?
-    getter real_device_name: String?
-    getter audio: Bool?
-    getter video: Bool?
-    getter type: String?
+    getter id : String?
+    getter real_device_name : String?
+    getter audio : Bool?
+    getter video : Bool?
+    getter type : String?
   end  
 
   # Represents a streaming channel
