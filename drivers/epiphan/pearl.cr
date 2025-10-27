@@ -303,7 +303,7 @@ class Epiphan::Pearl < PlaceOS::Driver
   private def poll_status
     begin
       get_system_status
-      get_ndi_status
+      get_inputs_status
       list_recorders
       get_active_recordings
       list_channels
