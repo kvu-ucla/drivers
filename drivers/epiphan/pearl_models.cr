@@ -211,5 +211,5 @@ module Epiphan::PearlModels
   alias SystemStatusResponse = ApiResponse(SystemStatus)
   alias InputStatusResponse = ApiResponse(Array(Inputs))
   alias ConnectivityDetailsResponse = ApiResponse(Connectivity)
-  alias FirmwareDetailsResponse = ApiResonse(FirmwareDetails)
+  alias FirmwareDetailsResponse = ApiResponse(FirmwareDetails)
 end
