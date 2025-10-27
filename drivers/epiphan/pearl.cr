@@ -83,9 +83,9 @@ class Epiphan::Pearl < PlaceOS::Driver
     connectivity_response = Epiphan::PearlModels::ConnectivityDetailsResponse.from_json(response.body.not_nil!)
     raise "API returned error: #{connectivity_response.status}" unless connectivity_response.status == "ok"
 
-    @connectivity_details = connectivity_response.result
-    self[:connectivity_details] = @connectivity_details
-    @connectivity_details
+    connectivity_details = connectivity_response.result
+    self[:connectivity_details] = connectivity_details
+    connectivity_details
   end
 
   def list_recorders
