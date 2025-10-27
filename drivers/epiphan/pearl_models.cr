@@ -1,6 +1,7 @@
 require "json"
 
 module Epiphan::PearlModels
+  
   # Enum for recorder states
   enum RecorderState
     Started
@@ -25,6 +26,33 @@ module Epiphan::PearlModels
     getter status : String
     getter result : T
   end
+
+  # Connectivity details
+  class Connectivity
+    include JSON::Serializable
+
+    getter mdns : String?
+    getter dns : String?
+    getter http : String?
+    getter https : String?
+    getter captive_portal : String?
+    getter external_ip : String?
+    getter icmp : String?
+    getter epiphan_edge : String?
+    getter vtun : String?
+  end
+
+  # Firmware Details
+  class FirmwareDetails
+    include JSON::Serializable
+
+    getter version : String?
+    getter revision : String?
+    getter product_id : Int32?
+    getter product_name : String?
+  end
+
+
 
   # Represents a recording channel/recorder
   class Recorder
@@ -182,4 +210,6 @@ module Epiphan::PearlModels
   alias PublishersResponse = ApiResponse(Array(Publisher))
   alias SystemStatusResponse = ApiResponse(SystemStatus)
   alias InputStatusResponse = ApiResponse(Array(Inputs))
+  alias ConnectivityDetailsResponse = ApiResponse(Connectivity)
+  alias FirmwareDetailsResponse = ApiResonse(FirmwareDetails)
 end

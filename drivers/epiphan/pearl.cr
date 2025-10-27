@@ -51,11 +51,41 @@ class Epiphan::Pearl < PlaceOS::Driver
 
   def connected
     schedule.every(@poll_every.seconds) { poll_status }
-    schedule.in(2.seconds) { poll_status }
+    schedule.in(2.seconds) { 
+      poll_status 
+      get_firmware
+      get_connectivity_details
+    }
   end
 
   def disconnected
     schedule.clear
+  end
+
+  def get_firwmare
+    response = get("/api/v2.0/system/firmware")
+
+    raise "Failed to get firmware details: #{response.status_code}" unless response.success?
+
+    firmware_response = Epiphan::PearlModels::ConnectivityDetailsResponse.from_json(response.body.not_nil!)
+    raise "API returned error: #{firmware_response.status}" unless firmware_response.status == "ok"
+
+    firmware = firmware_response.result
+    self[:firmware] = firmware
+    firmware
+  end
+
+  def get_connectivity_details
+    response = get("api/v2.0/system/connectivity/details")
+   
+    raise "Failed to get connectivity details: #{response.status_code}" unless response.success?
+
+    connectivity_response = Epiphan::PearlModels::ConnectivityDetailsResponse.from_json(response.body.not_nil!)
+    raise "API returned error: #{connectivity_response.status}" unless connectivity_response.status == "ok"
+
+    @connectivity_details = connectivity_response.result
+    self[:connectivity_details] = @connectivity_details
+    @connectivity_details
   end
 
   def list_recorders
