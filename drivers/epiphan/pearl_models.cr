@@ -55,6 +55,17 @@ module Epiphan::PearlModels
 
   end
 
+    # Represents the status of an individual input
+  class InputStatus
+    include JSON::Serializable
+
+    getter video : VideoInputState?
+    getter audio : AudioInputState?
+    getter clock_sync : Bool?
+    getter connection : Connection?
+    getter warnings : Array(JSON::Any)?
+  end
+
   # Represents the status of the video component of an individual input
   class VideoInputState
     include JSON::Serializable
@@ -80,17 +91,6 @@ module Epiphan::PearlModels
     getter sample_rate : Int32?
     getter real_device_name : String?
     getter error : String? 
-  end
-
-  # Represents the status of an individual input
-  class InputStatus
-    include JSON::Serializable
-
-    getter video : VideoInputState?
-    getter audio : AudioInputState?
-    getter clock_sync : Bool?
-    getter connection : Connection?
-    getter warnings : Array(JSON::Any)?  # Add ?
   end
 
   # Represents the connection status of an individual input
