@@ -65,7 +65,7 @@ module Epiphan::PearlModels
     getter codec : String?
     getter fps : Float64?
     getter real_device_name : String?
-    getter vrr  Float64?
+    getter vrr : Float64?
     getter interlaced : Bool?
     getter error : String?
   end
