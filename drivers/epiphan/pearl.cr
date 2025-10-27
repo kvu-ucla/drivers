@@ -67,7 +67,7 @@ class Epiphan::Pearl < PlaceOS::Driver
 
     raise "Failed to get firmware details: #{response.status_code}" unless response.success?
 
-    firmware_response = Epiphan::PearlModels::ConnectivityDetailsResponse.from_json(response.body.not_nil!)
+    firmware_response = Epiphan::PearlModels::FirmwareDetailsResponse.from_json(response.body.not_nil!)
     raise "API returned error: #{firmware_response.status}" unless firmware_response.status == "ok"
 
     firmware = firmware_response.result
@@ -76,7 +76,7 @@ class Epiphan::Pearl < PlaceOS::Driver
   end
 
   def get_connectivity_details
-    response = get("api/v2.0/system/connectivity/details")
+    response = get("/api/v2.0/system/connectivity/details")
    
     raise "Failed to get connectivity details: #{response.status_code}" unless response.success?
 
