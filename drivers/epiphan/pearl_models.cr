@@ -181,5 +181,5 @@ module Epiphan::PearlModels
   alias LayoutsResponse = ApiResponse(Array(Layout))
   alias PublishersResponse = ApiResponse(Array(Publisher))
   alias SystemStatusResponse = ApiResponse(SystemStatus)
-  alias InputStatusResponse = ApiResponse(Array(Input))
+  alias InputStatusResponse = ApiResponse(Array(Inputs))
 end
