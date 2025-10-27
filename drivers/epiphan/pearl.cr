@@ -62,7 +62,7 @@ class Epiphan::Pearl < PlaceOS::Driver
     schedule.clear
   end
 
-  def get_firwmare
+  def get_firmware
     response = get("/api/v2.0/system/firmware")
 
     raise "Failed to get firmware details: #{response.status_code}" unless response.success?
