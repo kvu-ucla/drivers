@@ -45,16 +45,70 @@ module Epiphan::PearlModels
     getter total : String?   # Total number of recordings as string (optional)
   end
 
-  # Represents the status of NDI inputs
-  class NdiStatus
+  # Represents the base Inputs class
+  class Inputs
     include JSON::Serializable
-    
-    getter id : String?
-    getter real_device_name : String?
-    getter audio : Bool?
-    getter video : Bool?
-    getter type : String?
-  end  
+
+    getter id: String?
+    getter name: String?
+    getter status: InputStatus?
+
+  end
+
+  # Represents the status of the video component of an individual input
+  class VideoInputState
+    include JSON::Serializable
+
+    getter state: String?
+    getter resolution: String?
+    getter actual_fps: Float64?
+    getter codec: String?
+    getter fps: Float64?
+    getter real_device_name: String?
+    getter vrr: Float64?
+    getter interlaced: Bool?
+    getter error: String?
+  end
+
+  # Represents the status of the audio component of an individual input
+  class AudioInputState
+    include JSON::Serializable
+
+    getter state: String?
+    getter levels: Levels?
+    getter codec: String?
+    getter sample_rate: Int32?
+    getter real_device_name: String?
+    getter error: String? 
+  end
+
+  # Represents the status of an individual input
+  class InputStatus
+    include JSON::Serializable
+
+    getter video: VideoInputState?
+    getter audio: AudioInputState?
+    getter clock_sync: Bool?
+    getter connection: Connection?
+    getter warnings: Array(JSON::Any)?  # Add ?
+  end
+
+  # Represents the connection status of an individual input
+  class Connection
+    include JSON::Serializable
+
+    getter duration: Int64?
+    getter state: String?
+  end
+
+  # Represents the RMS and PEAK audio levels
+  class Levels
+    include JSON::Serializable
+
+    getter rms: Array(Float64)?
+    getter peak: Array(Float64)?
+
+  end
 
   # Represents a streaming channel
   class Channel
@@ -127,5 +181,5 @@ module Epiphan::PearlModels
   alias LayoutsResponse = ApiResponse(Array(Layout))
   alias PublishersResponse = ApiResponse(Array(Publisher))
   alias SystemStatusResponse = ApiResponse(SystemStatus)
-  alias NdiStatusResponse = ApiResponse(Array(NdiStatus))
+  alias InputStatusResponse = ApiResponse(Array(Input))
 end
