@@ -49,9 +49,9 @@ module Epiphan::PearlModels
   class Inputs
     include JSON::Serializable
 
-    getter id: String?
-    getter name: String?
-    getter status: InputStatus?
+    getter id : String?
+    getter name : String?
+    getter status : InputStatus?
 
   end
 
@@ -59,54 +59,54 @@ module Epiphan::PearlModels
   class VideoInputState
     include JSON::Serializable
 
-    getter state: String?
-    getter resolution: String?
-    getter actual_fps: Float64?
-    getter codec: String?
-    getter fps: Float64?
-    getter real_device_name: String?
-    getter vrr: Float64?
-    getter interlaced: Bool?
-    getter error: String?
+    getter state : String?
+    getter resolution : String?
+    getter actual_fps : Float64?
+    getter codec : String?
+    getter fps : Float64?
+    getter real_device_name : String?
+    getter vrr  Float64?
+    getter interlaced : Bool?
+    getter error : String?
   end
 
   # Represents the status of the audio component of an individual input
   class AudioInputState
     include JSON::Serializable
 
-    getter state: String?
-    getter levels: Levels?
-    getter codec: String?
-    getter sample_rate: Int32?
-    getter real_device_name: String?
-    getter error: String? 
+    getter state : String?
+    getter levels : Levels?
+    getter codec : String?
+    getter sample_rate : Int32?
+    getter real_device_name : String?
+    getter error : String? 
   end
 
   # Represents the status of an individual input
   class InputStatus
     include JSON::Serializable
 
-    getter video: VideoInputState?
-    getter audio: AudioInputState?
-    getter clock_sync: Bool?
-    getter connection: Connection?
-    getter warnings: Array(JSON::Any)?  # Add ?
+    getter video : VideoInputState?
+    getter audio : AudioInputState?
+    getter clock_sync : Bool?
+    getter connection : Connection?
+    getter warnings : Array(JSON::Any)?  # Add ?
   end
 
   # Represents the connection status of an individual input
   class Connection
     include JSON::Serializable
 
-    getter duration: Int64?
-    getter state: String?
+    getter duration : Int64?
+    getter state : String?
   end
 
   # Represents the RMS and PEAK audio levels
   class Levels
     include JSON::Serializable
 
-    getter rms: Array(Float64)?
-    getter peak: Array(Float64)?
+    getter rms : Array(Float64)?
+    getter peak : Array(Float64)?
 
   end
 
