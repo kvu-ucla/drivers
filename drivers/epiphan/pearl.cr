@@ -232,7 +232,7 @@ class Epiphan::Pearl < PlaceOS::Driver
 
     input_status = status_response.result
     status_response.result.each do |input|
-      self["#{input.id}_video_status"] = input.status&.video&.state == "active"
+      self["#{input.id}_video_status"] = (input.status&.video&.state) == "active"
     end
     input_status
   end
