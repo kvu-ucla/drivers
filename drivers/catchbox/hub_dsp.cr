@@ -42,13 +42,26 @@ class Catchbox::HubDSP < PlaceOS::Driver
     # schedule.clear
   end
 
-  def query_device_info
-    request = ApiRequest.new(
-      rx: RxCommand.new(
-        device: DeviceCommand.new(name: nil)
-      )
-    )
-    send_request(request)
+  def query_device_info_slice
+    # request = ApiRequest.new(
+    #   rx: RxCommand.new(
+    #     device: DeviceCommand.new(name: nil)
+    #   )
+    # )
+
+    request = %({"rx":{"device":{"device_type":null}}})
+    send(request.to_slice)
+  end
+
+    def query_device_info_raw
+    # request = ApiRequest.new(
+    #   rx: RxCommand.new(
+    #     device: DeviceCommand.new(name: nil)
+    #   )
+    # )
+
+    request = %({"rx":{"device":{"device_type":null}}})
+    send(request)
   end
 
   # def query_network_info
