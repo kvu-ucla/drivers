@@ -42,27 +42,27 @@ class Catchbox::HubDSP < PlaceOS::Driver
     # schedule.clear
   end
 
-  def query_device_info_slice
-    # request = ApiRequest.new(
-    #   rx: RxCommand.new(
-    #     device: DeviceCommand.new(name: nil)
-    #   )
-    # )
+  # def query_device_info_slice
+  #   # request = ApiRequest.new(
+  #   #   rx: RxCommand.new(
+  #   #     device: DeviceCommand.new(name: nil)
+  #   #   )
+  #   # )
 
-    request = %({"rx":{"device":{"device_type":null}}})
-    send(request.to_slice)
-  end
+  #   request = %({"rx":{"device":{"device_type":null}}})
+  #   send(request.to_slice)
+  # end
 
-    def query_device_info_raw
-    # request = ApiRequest.new(
-    #   rx: RxCommand.new(
-    #     device: DeviceCommand.new(name: nil)
-    #   )
-    # )
+  #   def query_device_info_raw
+  #   # request = ApiRequest.new(
+  #   #   rx: RxCommand.new(
+  #   #     device: DeviceCommand.new(name: nil)
+  #   #   )
+  #   # )
 
-    request = %({"rx":{"device":{"device_type":null}}})
-    send(request)
-  end
+  #   request = %({"rx":{"device":{"device_type":null}}})
+  #   send(request)
+  # end
 
   # def query_network_info
   #   request = ApiRequest.new(
@@ -169,14 +169,16 @@ class Catchbox::HubDSP < PlaceOS::Driver
   # end
 
   def send_request(request : ApiRequest)
-    json_data = request.to_json
-    logger.debug { "Sending: #{json_data}" }
-    send(json_data)
+    json = request.to_json
+    logger.debug { "Sending: #{json}" }
+    send(json.to_slice)  # Convert string to bytes for UDP
   end
 
-  def send_request_debug(request : String)
-    send(request)
-  end
+  # def send_request_debug(request : JSON::Any)
+  #   data = request.to_json
+  #   logger.debug { "Sending Debug: #{json_string}" }
+  #   send(data)
+  # end
 
   def received(data, task)
     data_string = String.new(data).strip
