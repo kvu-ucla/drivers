@@ -53,6 +53,6 @@ class Catchbox::HubDSP < PlaceOS::Driver
     logger.debug { "Received: #{data_string}" }
 
     return unless data_string.starts_with?("{") && data_string.ends_with?("}")
-
+  end
 
 end
