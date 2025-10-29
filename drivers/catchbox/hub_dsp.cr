@@ -28,6 +28,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
   def connected
     logger.debug { "Connected to Catchbox Hub DSP" }
+    logger.debug { "Transport class: #{transport.class}" }
+
+    self[:transport] = transport.class.to_s
     # schedule.clear
 
     # schedule.every(60.seconds) {
