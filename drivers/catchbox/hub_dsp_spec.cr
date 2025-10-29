@@ -244,7 +244,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
     }.to_json + "\n")
     
     responds({
-      "rx" => {},
+      "rx" => {} of String => JSON::Any,
       "error" => 0,
     }.to_json)
   end
@@ -332,7 +332,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
     }.to_json + "\n")
     
     responds({
-      "rx" => {},
+      "rx" => {} of String => JSON::Any,
       "error" => 1,
     }.to_json)
   end
