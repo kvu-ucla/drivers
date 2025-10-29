@@ -48,14 +48,15 @@ class Catchbox::HubDSP < PlaceOS::Driver
   def send_request(request : JSON::Any)
     json = request.to_json
     logger.debug { "Sending: #{json}" }
-    send(json.to_slice)  # Convert string to bytes for UDP
+    send(json.to_slice) 
   end
 
   def received(data, task)
+    logger.debug { "=== RECEIVED CALLED ===" }
     data_string = String.new(data).strip
     logger.debug { "Received: #{data_string}" }
-
-    return unless data_string.starts_with?("{") && data_string.ends_with?("}")
+    
+    task.try(&.success)
   end
 
 end
