@@ -16,7 +16,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
   })
 
   def on_load
-    transport.tokenizer = Tokenizer.new("\n")
+    transport.tokenizer = Tokenizer.new(Bytes.empty)
     on_update
   end
 
