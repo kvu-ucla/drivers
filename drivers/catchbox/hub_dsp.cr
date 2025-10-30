@@ -43,8 +43,13 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
   def send_request(request : JSON::Any)
     json = request.to_json
-    logger.debug { "Sending: #{json}" }
+    logger.debug { "Sending Request: #{json}" }
     send(json.to_slice) 
+  end
+
+  def send_subscription(subscription : String)
+    logger.debug { "Sending Subscription: #{subscription}" }
+    send(subscription)
   end
 
   def received(data, task)
@@ -59,39 +64,39 @@ class Catchbox::HubDSP < PlaceOS::Driver
   # Microphone Mute State
   def subscribe_mic_mute_states(period_ms : Int32, enable : Bool)
     ["mic1", "mic2", "mic3", "mic4"].each do |mic|
-      request = {
+      sub = {
         "subscribe" => [{
           "#" => {"enable" => enable, "period_ms" => period_ms},
           "rx" => { "audio" => { "input" => { mic => { "mute" => nil }}}}
         }]
       }
-      send_request(request.to_json)
+      send_subscription(sub.to_json)
     end
   end
 
   # Microphone Battery Status
   def subscribe_mic_battery_levels(period_ms : Int32, enable : Bool)
     (1..4).each do |num|
-      request = {
+      sub = {
         "subscribe" => [{
           "#" => {"enable" => enable, "period_ms" => period_ms},
           "tx#{num}" => { "device" => { "battery" => nil }}
         }]
       }
-      send_request(request.to_json)
+      send_subscription(sub.to_json)
     end
   end
 
   # Microphone Link Status
   def subscribe_mic_link_state(period_ms : Int32, enable : Bool)
     ["mic1", "mic2", "mic3", "mic4"].each do |mic|
-      request = {
+      sub = {
         "subscribe" => [{
           "#" => {"enable" => enable, "period_ms" => period_ms},
           "rx" => {"device" => {"#{mic}_link_state" => nil}}
         }]
       }
-      send_request(request.to_json)
+      send_subscription(sub.to_json)
     end
   end
 
