@@ -20,43 +20,95 @@ class Catchbox::HubDSP < PlaceOS::Driver
   # 430	UNSUPPORTED_FEATURE (Returned when trying to get or set features which are not present on given product e.g. setting Mute button enable feature for Cube)
 
   default_settings({
-    poll_interval: 30,
     subscribe_mics_status: true,
-    subscribe_device_status: true, 
+    mics_battery_polling_interval: 60000, 
+    mics_link_polling_interval: 30000
   })
+
+  @battery_poll_interval : Int32 = 60000
+  @link_poll_interval : Int32 = 30000
+  @mic_subscription : Bool = true
 
   def on_load
     transport.tokenizer = nil
+    
+    on_update
   end
 
   def on_update
     #TODO 
+    @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000 #60 seconds by default
+    @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000 #30 second by default 
+    @mic_subscription = setting?(Bool, :subscribe_mics_status) || true #true by default
   end
 
   def connected
     logger.debug { "Connected to Catchbox Hub DSP" }
+
+    #subscriptions
+    subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
+    subscribe_mic_link_state( @link_poll_interval, @mic_subscription)
+
+    #query device info once
+    schedule.in(5.seconds) do
+      query_device_status
+      query_network_status
+    end
   end
 
   def disconnected
     logger.debug { "Disconnected to Catchbox Hub DSP" }
   end
 
-  def send_request(request : JSON::Any)
+  def manual_send(request : JSON::Any)
     json = request.to_json
-    logger.debug { "Sending Request: #{json}" }
+    logger.debug { "Sending Manual Request: #{json}" }
     send(json.to_slice) 
   end
 
-  def send_subscription(subscription : String)
-    logger.debug { "Sending Subscription: #{subscription}" }
-    send(subscription)
+  def send_request(request : String)
+    logger.debug { "Sending Request: #{request}" }
+    send(request)
   end
+
+  # def received(data, task)
+  #   data_string = String.new(data).strip
+  #   logger.debug { "Received: #{data_string}" }
+    
+  #   task.try(&.success)
+  # end
 
   def received(data, task)
     data_string = String.new(data).strip
     logger.debug { "Received: #{data_string}" }
+    response = ApiResponse.from_json(data_string)
+    
+    response.rx.try do |rx|
+      rx.device.try { |d| process_device(d) }
+      rx.network.try { |n| process_network(n) }
+      rx.audio.try { |a| process_audio(a) }
+    end
     
     task.try(&.success)
+  end
+
+  private def process_device(device : Device)
+    self[:rx_device_type] = device.device_type if device.device_type
+    self[:rx_device_name] = device.name if device.name
+    self[:rx_firmware] = device.firmware_info if device.firmware_info
+    self[:rx_serial] = device.serial if device.serial
+  end
+
+  private def process_network(network : Network)
+    self[:ip_address] = network.ip_address if network.ip_address
+    self[:ip_address] = network.ip_mode if network.ip_mode
+    self[:mac] = network.mac if network.mac
+    self[:subnet] = network.subnet if network.subnet
+     self[:gateway] = network.gateway if network.gateway
+  end
+
+  private def process_audio(audio : Audio)
+    #TODO
   end
 
   ## Subscriptions ##
@@ -70,7 +122,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
           "rx" => { "audio" => { "input" => { mic => { "mute" => nil }}}}
         }]
       }
-      send_subscription(sub.to_json)
+      send_request(sub.to_json)
     end
   end
 
@@ -83,7 +135,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
           "tx#{num}" => { "device" => { "battery" => nil }}
         }]
       }
-      send_subscription(sub.to_json)
+      send_request(sub.to_json)
     end
   end
 
@@ -96,7 +148,23 @@ class Catchbox::HubDSP < PlaceOS::Driver
           "rx" => {"device" => {"#{mic}_link_state" => nil}}
         }]
       }
-      send_subscription(sub.to_json)
+      send_request(sub.to_json)
+    end
+  end
+
+  ## Query ##
+
+  def query_device_status
+    ["name", "device_type", "firmware_info", "serial"].each do |field|
+      query = ({"rx" => {"device" => {field => nil}}})
+      send_request(query.to_json)
+    end
+  end
+
+  def query_network_status
+    ["mac", "ip_mode", "ip_address", "subnet", "gateway"].each do |field|
+      query = ({"rx" => {"network" => {field => nil}}})
+      send_request(query.to_json)
     end
   end
 
