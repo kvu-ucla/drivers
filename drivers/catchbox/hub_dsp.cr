@@ -49,7 +49,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
   ## Subscriptions ##
 
   # Microphone Mute State
-  private def subscribe_mic_mute_states(period_ms : Int32, enable : Bool)
+  def subscribe_mic_mute_states(period_ms : Int32, enable : Bool)
     ["mic1", "mic2", "mic3", "mic4"].each do |mic|
       request = {
         "subscribe" => [{
@@ -62,7 +62,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
   end
 
   # Microphone Battery Status
-  private def subscribe_mic_battery_levels(period_ms : Int32, enable : Bool)
+  def subscribe_mic_battery_levels(period_ms : Int32, enable : Bool)
     (1..4).each do |num|
       request = {
         "subscribe" => [{
@@ -75,7 +75,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
   end
 
   # Microphone Link Status
-  private def subscribe_mic_link_state(period_ms : Int32, enable : Bool)
+  def subscribe_mic_link_state(period_ms : Int32, enable : Bool)
     ["mic1", "mic2", "mic3", "mic4"].each do |mic|
       request = {
         "subscribe" => [{
