@@ -25,6 +25,14 @@ class Catchbox::HubDSP < PlaceOS::Driver
     subscribe_device_status: true, 
   })
 
+  def on_load
+    transport.tokenizer = nil
+  end
+
+  def on_update
+    #TODO 
+  end
+
   def connected
     logger.debug { "Connected to Catchbox Hub DSP" }
   end
@@ -57,7 +65,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
           "rx" => { "audio" => { "input" => { mic => { "mute" => nil }}}}
         }]
       }
-      send(request.to_json)
+      send_request(request.to_json)
     end
   end
 
@@ -70,7 +78,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
           "tx#{num}" => { "device" => { "battery" => nil }}
         }]
       }
-      send(request.to_json)
+      send_request(request.to_json)
     end
   end
 
@@ -83,7 +91,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
           "rx" => {"device" => {"#{mic}_link_state" => nil}}
         }]
       }
-      send(request.to_json)
+      send_request(request.to_json)
     end
   end
 
