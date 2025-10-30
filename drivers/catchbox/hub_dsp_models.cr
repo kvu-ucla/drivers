@@ -4,150 +4,113 @@ module Catchbox
   struct ApiRequest
     include JSON::Serializable
 
-    property rx : RxCommand?
-
-    def initialize(@rx : RxCommand? = nil)
-    end
+    property rx : HubMessage?
+    property tx1 : MicrophoneMessage?
+    property tx2 : MicrophoneMessage?
+    property tx3 : MicrophoneMessage?
+    property tx4 : MicrophoneMessage?
   end
 
   struct ApiResponse
     include JSON::Serializable
 
-    property rx : RxResponse?
-    property error : Int32 = 0
-
-    def initialize(@rx : RxResponse? = nil, @error : Int32 = 0)
-    end
+    property rx : HubMessage?
+    property tx1 : MicrophoneMessage?
+    property tx2 : MicrophoneMessage?
+    property tx3 : MicrophoneMessage?
+    property tx4 : MicrophoneMessage?
+    property error : Int32?
   end
 
-  struct RxCommand
+  struct HubMessage
     include JSON::Serializable
 
-    property network : NetworkCommand?
-    property device : DeviceCommand?
-    property audio : AudioCommand?
-
-    def initialize(@network : NetworkCommand? = nil, @device : DeviceCommand? = nil, @audio : AudioCommand? = nil)
-    end
+    property network : Network?
+    property device : Device?
+    property audio : Audio?
+    property settings : Settings?
   end
 
-  struct RxResponse
+  struct MicrophoneMessage
     include JSON::Serializable
 
-    property network : NetworkResponse?
-    property device : DeviceResponse?
-    property audio : AudioResponse?
-
-    def initialize(@network : NetworkResponse? = nil, @device : DeviceResponse? = nil, @audio : AudioResponse? = nil)
-    end
+    property feature : Feature?
+    property device : Device?
   end
 
-  struct NetworkCommand
+  struct Network
     include JSON::Serializable
 
     property mac : String?
-    property ip_mode : String?
-    property ip : String?
+    property ip_mode : Int32?
+    property ip_address : String?
     property subnet : String?
     property gateway : String?
-    property reboot : Bool?
-
-    def initialize(@mac : String? = nil, @ip_mode : String? = nil, @ip : String? = nil, @subnet : String? = nil, @gateway : String? = nil, @reboot : Bool? = nil)
-    end
+    property reboot : Int32?
   end
 
-  struct NetworkResponse
-    include JSON::Serializable
-
-    property mac : String?
-    property ip_mode : String?
-    property ip : String?
-    property subnet : String?
-    property gateway : String?
-
-    def initialize(@mac : String? = nil, @ip_mode : String? = nil, @ip : String? = nil, @subnet : String? = nil, @gateway : String? = nil)
-    end
-  end
-
-  struct DeviceCommand
+  struct Device
     include JSON::Serializable
 
     property name : String?
-
-    def initialize(@name : String? = nil)
-    end
-  end
-
-  struct DeviceResponse
-    include JSON::Serializable
-
-    property name : String?
-    property firmware : String?
-    property hardware : String?
+    property device_type : String?
+    property firmware_info : String?
     property serial : String?
-
-    def initialize(@name : String? = nil, @firmware : String? = nil, @hardware : String? = nil, @serial : String? = nil)
-    end
-  end
-
-  struct AudioCommand
-    include JSON::Serializable
-
-    property input : AudioInputCommand?
-
-    def initialize(@input : AudioInputCommand? = nil)
-    end
-  end
-
-  struct AudioResponse
-    include JSON::Serializable
-
-    property input : AudioInputResponse?
-
-    def initialize(@input : AudioInputResponse? = nil)
-    end
-  end
-
-  struct AudioInputCommand
-    include JSON::Serializable
-
-    property mic1 : MicCommand?
-    property mic2 : MicCommand?
-    property mic3 : MicCommand?
-
-    def initialize(@mic1 : MicCommand? = nil, @mic2 : MicCommand? = nil, @mic3 : MicCommand? = nil)
-    end
-  end
-
-  struct AudioInputResponse
-    include JSON::Serializable
-
-    property mic1 : MicResponse?
-    property mic2 : MicResponse?
-    property mic3 : MicResponse?
-
-    def initialize(@mic1 : MicResponse? = nil, @mic2 : MicResponse? = nil, @mic3 : MicResponse? = nil)
-    end
-  end
-
-  struct MicCommand
-    include JSON::Serializable
-
-    property mute : Bool?
-
-    def initialize(@mute : Bool? = nil)
-    end
-  end
-
-  struct MicResponse
-    include JSON::Serializable
-
-    property mute : Bool?
     property battery : Int32?
-    property signal : Int32?
-    property connected : Bool?
+    property mic1_link_state : String?
+    property mic2_link_state : String?
+    property mic3_link_state : String?
+    property mic4_link_state : String?
+    property reset : Int32?
+    property reset_to_default : Int32?
+    property rssi : Int32?
+    property rf_power : Int32?
+    property flex_mode : Int32?
+    property usb_device_mode : Int32?
+    property read_only_mode : Int32?
+    property pairing : Int32?
 
-    def initialize(@mute : Bool? = nil, @battery : Int32? = nil, @signal : Int32? = nil, @connected : Bool? = nil)
-    end
   end
+
+  struct Audio
+    include JSON::Serializable
+
+    property input : AudioInput?
+  end
+
+  struct Settings
+    include JSON::Serializable
+
+    property input : AudioInput?
+  end
+
+  struct Feature
+    include JSON::Serializable
+  
+    property mute_button_enable : Int32?
+    property mute_at_pickup_enable : Int32?
+    property out_of_range_alarm_enable : Int32?
+    property power_saving_enable : Int32?
+    property stealth_mode_enable : Int32?
+  end
+  
+  struct AudioInput
+    include JSON::Serializable
+
+    property mic1 : AudioState?
+    property mic2 : AudioState?
+    property mic3 : AudioState?
+    property mic4 : AudioState?
+    property usb : AudioState?
+    property aux : AudioState?
+  end
+
+  struct AudioState
+    include JSON::Serializable
+
+    property gain : Int32?
+    property mute : Int32?
+    property activity : Int32?
+  end
+
 end
