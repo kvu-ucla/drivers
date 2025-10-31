@@ -20,9 +20,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
   # 430	UNSUPPORTED_FEATURE (Returned when trying to get or set features which are not present on given product e.g. setting Mute button enable feature for Cube)
 
   default_settings({
-    subscribe_mics_status: true,
-    mics_battery_polling_interval: 60000, 
-    mics_link_polling_interval: 30000
+    subscribe_mics_status:         true,
+    mics_battery_polling_interval: 60000,
+    mics_link_polling_interval:    30000,
   })
 
   @battery_poll_interval : Int32 = 60000
@@ -31,27 +31,27 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
   def on_load
     transport.tokenizer = nil
-    
+
     on_update
   end
 
   def on_update
-    #TODO 
-    @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000 #60 seconds by default
-    @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000 #30 second by default 
-    @mic_subscription = setting?(Bool, :subscribe_mics_status) || true #true by default
+    @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000 # 60 seconds by default
+    @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000       # 30 second by default
+    @mic_subscription = setting?(Bool, :subscribe_mics_status) || true                # true by default
   end
 
   def connected
     logger.debug { "Connected to Catchbox Hub DSP" }
 
-    #subscriptions
+    # subscriptions
     subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
-    subscribe_mic_link_state( @link_poll_interval, @mic_subscription)
+    subscribe_mic_link_state(@link_poll_interval, @mic_subscription)
 
-    #query device info once
+    # query device info once
     schedule.in(5.seconds) do
-      query_device_status
+      query_rx_device_status
+      query_tx_device_status
       query_network_status
     end
   end
@@ -63,7 +63,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
   def manual_send(request : JSON::Any)
     json = request.to_json
     logger.debug { "Sending Manual Request: #{json}" }
-    send(json.to_slice) 
+    send(json.to_slice)
   end
 
   def send_request(request : String)
@@ -71,24 +71,28 @@ class Catchbox::HubDSP < PlaceOS::Driver
     send(request)
   end
 
-  # def received(data, task)
-  #   data_string = String.new(data).strip
-  #   logger.debug { "Received: #{data_string}" }
-    
-  #   task.try(&.success)
-  # end
-
   def received(data, task)
     data_string = String.new(data).strip
     logger.debug { "Received: #{data_string}" }
     response = ApiResponse.from_json(data_string)
-    
+
     response.rx.try do |rx|
       rx.device.try { |d| process_device(d) }
       rx.network.try { |n| process_network(n) }
       rx.audio.try { |a| process_audio(a) }
     end
-    
+
+    [
+      {"tx1", response.tx1},
+      {"tx2", response.tx2},
+      {"tx3", response.tx3},
+      {"tx4", response.tx4},
+    ].each do |(name, tx)|
+      tx.try do |t|
+        t.device.try { |d| process_mic(d, name) }
+      end
+    end
+
     task.try(&.success)
   end
 
@@ -97,30 +101,42 @@ class Catchbox::HubDSP < PlaceOS::Driver
     self[:rx_device_name] = device.name if device.name
     self[:rx_firmware] = device.firmware_info if device.firmware_info
     self[:rx_serial] = device.serial if device.serial
+    self[:mic1_link_state] = device.mic1_link_state if device.mic1_link_state
+    self[:mic2_link_state] = device.mic2_link_state if device.mic2_link_state
+    self[:mic3_link_state] = device.mic3_link_state if device.mic3_link_state
+    self[:mic4_link_state] = device.mic4_link_state if device.mic4_link_state
   end
 
   private def process_network(network : Network)
     self[:ip_address] = network.ip_address if network.ip_address
-    self[:ip_address] = network.ip_mode if network.ip_mode
+    self[:ip_mode] = network.ip_mode if network.ip_mode
     self[:mac] = network.mac if network.mac
     self[:subnet] = network.subnet if network.subnet
-     self[:gateway] = network.gateway if network.gateway
+    self[:gateway] = network.gateway if network.gateway
+  end
+
+  private def process_mic(device : Device, tx : String)
+    self["#{tx}_battery_level"] = device.battery if device.battery
+    self["#{tx}_name"] = device.name if device.name
+    self["#{tx}_firmware"] = device.firmware_info if device.firmware_info
+    self["#{tx}_rssi"] = device.rssi if device.rssi
+    self["#{tx}_serial"] = device.serial if device.serial
   end
 
   private def process_audio(audio : Audio)
-    #TODO
+    # TODO
   end
 
-  ## Subscriptions ##
+  # # Subscriptions ##
 
   # Microphone Mute State
   def subscribe_mic_mute_states(period_ms : Int32, enable : Bool)
     ["mic1", "mic2", "mic3", "mic4"].each do |mic|
       sub = {
         "subscribe" => [{
-          "#" => {"enable" => enable, "period_ms" => period_ms},
-          "rx" => { "audio" => { "input" => { mic => { "mute" => nil }}}}
-        }]
+          "#"  => {"enable" => enable, "period_ms" => period_ms},
+          "rx" => {"audio" => {"input" => {mic => {"mute" => nil}}}},
+        }],
       }
       send_request(sub.to_json)
     end
@@ -131,9 +147,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
     (1..4).each do |num|
       sub = {
         "subscribe" => [{
-          "#" => {"enable" => enable, "period_ms" => period_ms},
-          "tx#{num}" => { "device" => { "battery" => nil }}
-        }]
+          "#"        => {"enable" => enable, "period_ms" => period_ms},
+          "tx#{num}" => {"device" => {"battery" => nil}},
+        }],
       }
       send_request(sub.to_json)
     end
@@ -144,20 +160,29 @@ class Catchbox::HubDSP < PlaceOS::Driver
     ["mic1", "mic2", "mic3", "mic4"].each do |mic|
       sub = {
         "subscribe" => [{
-          "#" => {"enable" => enable, "period_ms" => period_ms},
-          "rx" => {"device" => {"#{mic}_link_state" => nil}}
-        }]
+          "#"  => {"enable" => enable, "period_ms" => period_ms},
+          "rx" => {"device" => {"#{mic}_link_state" => nil}},
+        }],
       }
       send_request(sub.to_json)
     end
   end
 
-  ## Query ##
+  # # Query ##
 
-  def query_device_status
+  def query_rx_device_status
     ["name", "device_type", "firmware_info", "serial"].each do |field|
       query = ({"rx" => {"device" => {field => nil}}})
       send_request(query.to_json)
+    end
+  end
+
+  def query_tx_device_status
+    (1..4).each do |num|
+      ["name", "firmware_info", "serial"].each do |field|
+        query = ({"tx#{num}" => {"device" => {field => nil}}})
+        send_request(query.to_json)
+      end
     end
   end
 
@@ -167,5 +192,4 @@ class Catchbox::HubDSP < PlaceOS::Driver
       send_request(query.to_json)
     end
   end
-
 end
