@@ -3,205 +3,242 @@ require "placeos-driver/spec"
 DriverSpecs.mock_driver "Panasonic::Projector::PPND" do
   # Test power on
   it "should power on the projector" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:power, true)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "PUT" && request.path.includes?("/power")
-        body = JSON.parse(request.body.not_nil!)
-        body["state"].should eq("on")
-        response.status_code = 200
-        response << %{{"state":"on"}}
-      end
+    # First request - get auth challenge
+    expect_http_request do |request, response|
+      request.method.should eq("PUT")
+      request.path.should eq("/api/v1/power")
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
     end
 
-    exec(:power, true).get
+    # Second request - with auth header
+    expect_http_request do |request, response|
+      request.method.should eq("PUT")
+      request.path.should eq("/api/v1/power")
+      request.headers["Authorization"]?.should_not be_nil
+      body = JSON.parse(request.body.not_nil!)
+      body["state"].should eq("on")
+      response.status_code = 200
+      response << %{{"state":"on"}}
+    end
+
+    result.get.should eq(true)
     status[:power].should eq(true)
   end
 
   # Test power off
   it "should power off the projector" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:power, false)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "PUT" && request.path.includes?("/power")
-        body = JSON.parse(request.body.not_nil!)
-        body["state"].should eq("standby")
-        response.status_code = 200
-        response << %{{"state":"standby"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      request.method.should eq("PUT")
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="abc123", opaque="def456"}
     end
 
-    exec(:power, false).get
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.method.should eq("PUT")
+      request.headers["Authorization"]?.should_not be_nil
+      body = JSON.parse(request.body.not_nil!)
+      body["state"].should eq("standby")
+      response.status_code = 200
+      response << %{{"state":"standby"}}
+    end
+
+    result.get.should eq(false)
     status[:power].should eq(false)
   end
 
   # Test power query
   it "should query power status" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:query_power_status)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "GET" && request.path.includes?("/power")
-        response.status_code = 200
-        response << %{{"state":"on"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/v1/power")
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="xyz789", opaque="uvw012"}
     end
 
-    result = exec(:query_power_status).get
-    result.should eq(true)
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/v1/power")
+      request.headers["Authorization"]?.should_not be_nil
+      response.status_code = 200
+      response << %{{"state":"on"}}
+    end
+
+    result.get.should eq(true)
     status[:power].should eq(true)
   end
 
   # Test input switching
   it "should switch to HDMI1 input" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:switch_to, "HDMI1")
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "PUT" && request.path.includes?("/input")
-        body = JSON.parse(request.body.not_nil!)
-        body["state"].should eq("HDMI1")
-        response.status_code = 200
-        response << %{{"state":"HDMI1"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="input123", opaque="input456"}
     end
 
-    exec(:switch_to, "HDMI1").get
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      body = JSON.parse(request.body.not_nil!)
+      body["state"].should eq("HDMI1")
+      response.status_code = 200
+      response << %{{"state":"HDMI1"}}
+    end
+
+    result.get.should eq("HDMI1")
     status[:input].should eq("HDMI1")
   end
 
   # Test shutter open
   it "should open the shutter" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:shutter, true)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "PUT" && request.path.includes?("/shutter")
-        body = JSON.parse(request.body.not_nil!)
-        body["state"].should eq("open")
-        response.status_code = 200
-        response << %{{"state":"open"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="shutter1", opaque="shutter2"}
     end
 
-    exec(:shutter, true).get
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      body = JSON.parse(request.body.not_nil!)
+      body["state"].should eq("open")
+      response.status_code = 200
+      response << %{{"state":"open"}}
+    end
+
+    result.get.should eq("open")
     status[:shutter_open].should eq(true)
   end
 
   # Test freeze on
   it "should enable freeze" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:freeze, true)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "PUT" && request.path.includes?("/freeze")
-        body = JSON.parse(request.body.not_nil!)
-        body["state"].should eq("on")
-        response.status_code = 200
-        response << %{{"state":"on"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="freeze1", opaque="freeze2"}
     end
 
-    exec(:freeze, true).get
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      body = JSON.parse(request.body.not_nil!)
+      body["state"].should eq("on")
+      response.status_code = 200
+      response << %{{"state":"on"}}
+    end
+
+    result.get.should eq(true)
     status[:frozen].should eq(true)
   end
 
   # Test signal query
   it "should query signal information" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:query_signal)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "GET" && request.path.includes?("/signal")
-        response.status_code = 200
-        response << %{{"infomation":"NO SIGNAL"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="signal1", opaque="signal2"}
     end
 
-    result = exec(:query_signal).get
-    result.should eq("NO SIGNAL")
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      response.status_code = 200
+      response << %{{"infomation":"NO SIGNAL"}}
+    end
+
+    result.get.should eq("NO SIGNAL")
     status[:no_signal].should eq(true)
   end
 
   # Test device information query
   it "should query device information" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:query_device_info)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "GET" && request.path.includes?("/device-information")
-        response.status_code = 200
-        response << %{
-          {
-            "model-name": "PT-CMZ50",
-            "serial-no": "ABCDE1234",
-            "projector-name": "NAME1234",
-            "macadress": "11-22-33-44-55-66"
-          }
-        }
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="device1", opaque="device2"}
     end
 
-    exec(:query_device_info).get
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      response.status_code = 200
+      response << %{
+        {
+          "model-name": "PT-CMZ50",
+          "serial-no": "ABCDE1234",
+          "projector-name": "NAME1234",
+          "macadress": "11-22-33-44-55-66"
+        }
+      }
+    end
+
+    result.get
     status[:model].should eq("PT-CMZ50")
     status[:serial_number].should eq("ABCDE1234")
   end
 
   # Test firmware version query
   it "should query firmware version" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:query_firmware_version)
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "GET" && request.path.includes?("/version")
-        response.status_code = 200
-        response << %{{"main-version":"1.00"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="version1", opaque="version2"}
     end
 
-    result = exec(:query_firmware_version).get
-    result.should eq("1.00")
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      response.status_code = 200
+      response << %{{"main-version":"1.00"}}
+    end
+
+    result.get.should eq("1.00")
     status[:firmware_version].should eq("1.00")
   end
 
   # Test NTP configuration
   it "should configure NTP settings" do
-    expect_http_request do |request, response|
-      auth_header = request.headers["Authorization"]?
+    result = exec(:configure_ntp, true, "time.google.com")
 
-      if auth_header.nil?
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"}
-      elsif request.method == "PUT" && request.path.includes?("/ntp")
-        body = JSON.parse(request.body.not_nil!)
-        body["ntp-sync"].should eq("on")
-        body["ntp-server"].should eq("time.google.com")
-        response.status_code = 200
-        response << %{{"ntp-sync":"on","ntp-server":"time.google.com"}}
-      end
+    # Auth challenge
+    expect_http_request do |request, response|
+      response.status_code = 401
+      response.headers["WWW-Authenticate"] = %{Digest realm="Panasonic", qop="auth", nonce="ntp1", opaque="ntp2"}
     end
 
-    exec(:configure_ntp, true, "time.google.com").get
+    # Authenticated request
+    expect_http_request do |request, response|
+      request.headers["Authorization"]?.should_not be_nil
+      body = JSON.parse(request.body.not_nil!)
+      body["ntp-sync"].should eq("on")
+      body["ntp-server"].should eq("time.google.com")
+      response.status_code = 200
+      response << %{{"ntp-sync":"on","ntp-server":"time.google.com"}}
+    end
+
+    result.get
     status[:ntp_sync].should eq(true)
     status[:ntp_server].should eq("time.google.com")
   end
