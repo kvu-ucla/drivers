@@ -57,10 +57,10 @@ module Catchbox
     property firmware_info : String?
     property serial : String?
     property battery : Int32?
-    property mic1_link_state : String?
-    property mic2_link_state : String?
-    property mic3_link_state : String?
-    property mic4_link_state : String?
+    property mic1_link_state : Int32?
+    property mic2_link_state : Int32?
+    property mic3_link_state : Int32?
+    property mic4_link_state : Int32?
     property reset : Int32?
     property reset_to_default : Int32?
     property rssi : Int32?

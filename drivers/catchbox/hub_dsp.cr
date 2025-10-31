@@ -2,7 +2,7 @@ require "placeos-driver"
 require "./hub_dsp_models"
 
 # Documentation: https://docs.catchbox.com/
-# API Command List: https://docs.google.com/spreadsheets/d/10aOYyVSSGEU3oRSo80UGlRG2WUvq-uPR/edit
+# V2.0 API Command List: https://docs.google.com/spreadsheets/d/10aOYyVSSGEU3oRSo80UGlRG2WUvq-uPR/edit
 
 class Catchbox::HubDSP < PlaceOS::Driver
   # Discovery Information
