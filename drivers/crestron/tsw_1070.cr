@@ -61,3 +61,5 @@ class Crestron::Tsw1070 < Crestron::CresNext
   # Additional API endpoints can be added here as needed
   # Refer to: https://sdkcon78221.crestron.com/sdk/TSW-70-API/Content/Topics/Objects/
 end
+
+
