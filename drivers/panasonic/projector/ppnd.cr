@@ -400,8 +400,8 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
     # Store individual temperature readings
     temps.each do |temp|
-      self["temp_#{temp.temperature_id}_name"] = temp.temperature_name
-      self["temp_#{temp.temperature_id}_celsius"] = temp.temperature_celsius
+      self["temp_#{temp.temperatures_id}_name"] = temp.temperature_name
+      self["temp_#{temp.temperatures_id}_celsius"] = temp.temperature_celsius
     end
 
     temps
@@ -415,8 +415,8 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     temp = Panasonic::Projector::TemperatureInfo.from_json(response.body)
-    self["temp_#{temp.temperature_id}_name"] = temp.temperature_name
-    self["temp_#{temp.temperature_id}_celsius"] = temp.temperature_celsius
+    self["temp_#{temp.temperatures_id}_name"] = temp.temperature_name
+    self["temp_#{temp.temperatures_id}_celsius"] = temp.temperature_celsius
 
     temp
   end
