@@ -79,7 +79,8 @@ module Panasonic::Projector
     @[JSON::Field(key: "projector-name")]
     property projector_name : String
 
-    property macadress : String # Note: API uses "macadress" (typo in API)
+    @[JSON::Field(key: "macaddress")]
+    property macaddress : String
   end
 
   # Firmware version
@@ -124,4 +125,20 @@ module Panasonic::Projector
 
     property state : String # "on" or "off"
   end
+
+  # Response model for lights 
+  struct LightsResponse
+    include JSON::Serializable
+    
+    property lights : Array(Panasonic::Projector::LightStatus)
+  end
+
+    # Response model for temperaatures 
+  struct TemperaturesResponse
+    include JSON::Serializable
+    
+    property temps : Array(Panasonic::Projector::TemperatureInfo)
+  end
+
+
 end

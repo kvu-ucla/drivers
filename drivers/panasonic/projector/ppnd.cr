@@ -166,7 +166,6 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
     result = Panasonic::Projector::PowerState.from_json(response.body)
     self[:power] = result.state == "on"
-    self[:power_target] = state
 
     result.state == "on"
   end
@@ -227,15 +226,14 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
     result = Panasonic::Projector::InputState.from_json(response.body)
     self[:input] = INPUT_REVERSE_MAPPING[result.state]?
-    self[:input_raw] = result.state
 
     result.state
   end
 
   # ====== Shutter Control ======
 
-  def shutter(state : Bool)
-    body = {state: state ? "open" : "close"}.to_json
+  def mute(state : Bool)
+    body = {state: state ? "close" : "open"}.to_json
 
     response = put_with_digest_auth("/shutter", body)
 
@@ -244,18 +242,9 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:shutter] = result.state
-    self[:shutter_open] = result.state == "open"
+    self[:mute] = result.state == "close"
 
     result.state
-  end
-
-  def shutter_open
-    shutter(true)
-  end
-
-  def shutter_close
-    shutter(false)
   end
 
   def query_shutter_status
@@ -266,8 +255,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:shutter] = result.state
-    self[:shutter_open] = result.state == "open"
+    self[:mute] = result.state == "close"
 
     result.state
   end
@@ -342,7 +330,8 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       raise "Lights query failed: #{response.status_code}"
     end
 
-    lights = Array(Panasonic::Projector::LightStatus).from_json(response.body)
+    lights_response = LightsResponse.from_json(response.body)
+    lights = lights_response.lights
     self[:lights] = lights
 
     # Store individual light states
@@ -354,8 +343,9 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     lights
   end
 
+  ## Remove
   def query_light(light_id : Int32)
-    response = get_with_digest_auth("/lights/#{light_id}")
+    response = get_with_digest_auth("/lights#{light_id}")
 
     unless response.success?
       raise "Light query failed: #{response.status_code}"
@@ -404,7 +394,8 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       raise "Temperature query failed: #{response.status_code}"
     end
 
-    temps = Array(Panasonic::Projector::TemperatureInfo).from_json(response.body)
+    temps_response = TemperaturesResponse.from_json(response.body)
+    temps = temps_response.temperatures
     self[:temperatures] = temps
 
     # Store individual temperature readings
@@ -417,7 +408,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
   end
 
   def query_temperature(temp_id : Int32)
-    response = get_with_digest_auth("/temperatures/#{temp_id}")
+    response = get_with_digest_auth("/temperatures#{temp_id}")
 
     unless response.success?
       raise "Temperature query failed: #{response.status_code}"
