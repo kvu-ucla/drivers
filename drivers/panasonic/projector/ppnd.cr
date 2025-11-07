@@ -65,9 +65,13 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
     # Schedule periodic status polling
     schedule.clear
+
+    query_device_info
+
     schedule.every(@poll_interval.seconds) do
       query_power_status
       query_input_status
+      query_temperatures
       query_shutter_status
       query_freeze_status
     end
