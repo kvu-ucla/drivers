@@ -137,7 +137,7 @@ module Panasonic::Projector
   struct TemperaturesResponse
     include JSON::Serializable
     
-    property temps : Array(Panasonic::Projector::TemperatureInfo)
+    property temperatures : Array(Panasonic::Projector::TemperatureInfo)
   end
 
 

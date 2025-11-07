@@ -369,7 +369,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     self[:model] = info.model_name
     self[:serial_number] = info.serial_no
     self[:projector_name] = info.projector_name
-    self[:mac_address] = info.macadress
+    self[:mac_address] = info.macaddress
 
     info
   end
