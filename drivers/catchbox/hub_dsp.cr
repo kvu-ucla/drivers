@@ -36,9 +36,14 @@ class Catchbox::HubDSP < PlaceOS::Driver
   end
 
   def on_update
+  # Update poll interval in ms
   @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000
   @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000
   @mic_subscription = setting?(Bool, :subscribe_mics_status) || false
+
+  #resub with new values
+  subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
+  subscribe_mic_link_state(@link_poll_interval, @mic_subscription)
   end
 
   def connected
