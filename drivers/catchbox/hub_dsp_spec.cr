@@ -9,7 +9,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "device" => {
@@ -40,7 +40,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "network" => {
@@ -73,7 +73,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "audio" => {
@@ -123,7 +123,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
 
   it "should mute a specific microphone" do
     exec(:mute_mic, 1, true)
-#test
+    # test
     should_send({
       "rx" => {
         "audio" => {
@@ -133,7 +133,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "audio" => {
@@ -161,7 +161,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "audio" => {
@@ -187,7 +187,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "device" => {
@@ -213,7 +213,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "network" => {
@@ -242,9 +242,9 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
-      "rx" => {} of String => JSON::Any,
+      "rx"    => {} of String => JSON::Any,
       "error" => 0,
     }.to_json)
   end
@@ -261,7 +261,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "audio" => {
@@ -282,7 +282,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "audio" => {
@@ -303,7 +303,7 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
       "rx" => {
         "audio" => {
@@ -330,9 +330,9 @@ DriverSpecs.mock_driver "Catchbox::HubDSP" do
         },
       },
     }.to_json + "\n")
-    
+
     responds({
-      "rx" => {} of String => JSON::Any,
+      "rx"    => {} of String => JSON::Any,
       "error" => 1,
     }.to_json)
   end

@@ -69,7 +69,6 @@ module Catchbox
     property usb_device_mode : Int32?
     property read_only_mode : Int32?
     property pairing : Int32?
-
   end
 
   struct Audio
@@ -86,14 +85,14 @@ module Catchbox
 
   struct Feature
     include JSON::Serializable
-  
+
     property mute_button_enable : Int32?
     property mute_at_pickup_enable : Int32?
     property out_of_range_alarm_enable : Int32?
     property power_saving_enable : Int32?
     property stealth_mode_enable : Int32?
   end
-  
+
   struct AudioInput
     include JSON::Serializable
 
@@ -112,5 +111,4 @@ module Catchbox
     property mute : Int32?
     property activity : Int32?
   end
-
 end

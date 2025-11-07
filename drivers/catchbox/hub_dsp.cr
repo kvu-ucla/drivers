@@ -25,9 +25,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
     mics_link_polling_interval:    30000,
   })
 
-  @battery_poll_interval : Int32 = 60000
-  @link_poll_interval : Int32 = 30000
-  @mic_subscription : Bool = true
+  @battery_poll_interval : Int32 = 0
+  @link_poll_interval : Int32 = 0
+  @mic_subscription : Bool = false
 
   def on_load
     transport.tokenizer = nil
@@ -36,9 +36,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
   end
 
   def on_update
-    @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000 # 60 seconds by default
-    @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000       # 30 second by default
-    @mic_subscription = setting?(Bool, :subscribe_mics_status) || true                # true by default
+  @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000
+  @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000
+  @mic_subscription = setting?(Bool, :subscribe_mics_status) || false
   end
 
   def connected
