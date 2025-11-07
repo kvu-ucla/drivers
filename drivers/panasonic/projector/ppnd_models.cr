@@ -95,17 +95,17 @@ module Panasonic::Projector
   struct TemperatureInfo
     include JSON::Serializable
 
-    @[JSON::Field(key: "temperature-id")]
-    property temperature_id : Int32
+    @[JSON::Field(key: "temperatures-id")]
+    property temperatures_id : Int32
 
-    @[JSON::Field(key: "temperature-name")]
-    property temperature_name : String
+    @[JSON::Field(key: "temperatures-name")]
+    property temperatures_name : String
 
-    @[JSON::Field(key: "temperature-celsius")]
-    property temperature_celsius : Int32
+    @[JSON::Field(key: "temperatures-celsius")]
+    property temperatures_celsius : Int32
 
-    @[JSON::Field(key: "temperature-kelvin")]
-    property temperature_kelvin : Int32
+    @[JSON::Field(key: "temperatures-kelvin")]
+    property temperatures_kelvin : Int32
   end
 
   # NTP settings
