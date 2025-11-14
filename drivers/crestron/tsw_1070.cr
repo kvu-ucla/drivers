@@ -35,7 +35,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
     schedule.every(10.minutes) { authenticate }
 
     # Sync device state every hour
-    schedule.every(1.hour) { poll_device_state }
+    schedule.every(1.hour) { poll_device_info }
   end
 
   def on_update
@@ -49,8 +49,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
       return
     end
 
-    poll_device_state
-
+    schedule.in(2.seconds) { poll_device_info }
     @lock.synchronize do
       if !@monitoring
         spawn { event_monitor }
@@ -62,9 +61,8 @@ class Crestron::Tsw1070 < PlaceOS::Driver
   # ====== Device Information ======
   # Documentation: https://sdkcon78221.crestron.com/sdk/TSW-70-API/Content/Topics/Objects/DeviceInfo.htm
 
-  def poll_device_state : Nil
-    logger.debug { "Polling device state..." }
-    response = get("/Device")
+  def poll_device_info : Nil
+    response = get("/Device/DeviceInfo", concurrent: true)
     raise "unexpected response code: #{response.status_code}" unless response.success?
 
     payload = JSON.parse(response.body)
@@ -76,26 +74,11 @@ class Crestron::Tsw1070 < PlaceOS::Driver
     # Store complete info
     self[:device_info] = device_info
 
-    # Store individual fields for easy access
-    self[:model] = device_info.model
-    self[:category] = device_info.category
-    self[:manufacturer] = device_info.manufacturer
-    self[:model_id] = device_info.model_id
-    self[:device_id] = device_info.device_id
-    self[:serial_number] = device_info.serial_number
-    self[:name] = device_info.name
-    self[:device_version] = device_info.device_version
-    self[:puf_version] = device_info.puf_version
-    self[:build_date] = device_info.build_date
-    self[:mac_address] = device_info.mac_address
-    self[:reboot_reason] = device_info.reboot_reason
-    self[:api_version] = device_info.version
-
-    logger.debug { "Device Info: #{device_info.model} (#{device_info.serial_number}), FW: #{device_info.puf_version}" }
+    device_info
   end
 
   # Long polling for real-time updates
-  def event_monitor
+  protected def event_monitor
     loop do
       break if terminated?
       if authenticated?
