@@ -61,7 +61,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
   # ====== Device Information ======
   # Documentation: https://sdkcon78221.crestron.com/sdk/TSW-70-API/Content/Topics/Objects/DeviceInfo.htm
 
-  def poll_device_info : Nil
+  def poll_device_info
     response = get("/Device/DeviceInfo", concurrent: true)
     raise "unexpected response code: #{response.status_code}" unless response.success?
 
@@ -78,7 +78,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
   end
 
   # Long polling for real-time updates
-  protected def event_monitor
+  def event_monitor
     loop do
       break if terminated?
       if authenticated?
@@ -135,5 +135,5 @@ class Crestron::Tsw1070 < PlaceOS::Driver
   end
 
   # Additional API endpoints can be added here as needed
-  # Refer to: https://sdkcon78221.crestron.com/sdk/TSW-70-API/Content/Topics/Objects/
+  # Refer to: https://sdkcon78221.crestron.com/sdk/TSW-70-API/Content/Topics/Home.htm
 end

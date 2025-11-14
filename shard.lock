@@ -35,11 +35,11 @@ shards:
 
   bacnet:
     git: https://github.com/spider-gazelle/crystal-bacnet.git
-    version: 1.0.0+git.commit.343835f3e9c8267868bc130edf1124d3774fb119
+    version: 1.0.0+git.commit.fe01d615c5860415d65856e51812c7f9d6acdbd4
 
   bindata:
     git: https://github.com/spider-gazelle/bindata.git
-    version: 2.1.0
+    version: 2.1.1
 
   bisect:
     git: https://github.com/spider-gazelle/bisect.git
@@ -95,7 +95,7 @@ shards:
 
   eventbus:
     git: https://github.com/spider-gazelle/eventbus.git
-    version: 1.0.0+git.commit.af63536d718348885a553dc4aa6debccc2946289
+    version: 1.0.0+git.commit.fab6102d472ce324db4df74c8df9f4a5fa22dafd
 
   exception_page:
     git: https://github.com/crystal-loot/exception_page.git
@@ -139,7 +139,7 @@ shards:
 
   http_proxy:
     git: https://github.com/mamantoha/http_proxy.git
-    version: 0.13.0
+    version: 0.13.1
 
   inactive-support:
     git: https://github.com/spider-gazelle/inactive-support.git
@@ -195,7 +195,7 @@ shards:
 
   openssl_ext:
     git: https://github.com/spider-gazelle/openssl_ext.git
-    version: 2.6.3
+    version: 2.8.1
 
   oq:
     git: https://github.com/blacksmoke16/oq.git
@@ -243,7 +243,7 @@ shards:
 
   placeos-driver:
     git: https://github.com/placeos/driver.git
-    version: 7.13.3
+    version: 7.15.0
 
   placeos-log-backend:
     git: https://github.com/place-labs/log-backend.git
@@ -251,11 +251,11 @@ shards:
 
   placeos-models:
     git: https://github.com/placeos/models.git
-    version: 9.76.1
+    version: 9.78.0
 
   pool:
     git: https://github.com/ysbaddaden/pool.git
-    version: 0.2.4
+    version: 0.3.0
 
   priority-queue:
     git: https://github.com/spider-gazelle/priority-queue.git
@@ -283,15 +283,15 @@ shards:
 
   redis:
     git: https://github.com/stefanwille/crystal-redis.git
-    version: 2.9.1
+    version: 2.7.0+git.commit.e81d33945592688c07add1274b811c06d0e4ee26
 
   redis-cluster:
-    git: https://github.com/caspiano/redis-cluster.cr.git
-    version: 0.8.5
+    git: https://github.com/place-labs/redis-cluster.cr.git
+    version: 0.8.6
 
   redis_service_manager:
     git: https://github.com/place-labs/redis_service_manager.git
-    version: 3.2.0
+    version: 3.3.0
 
   rendezvous-hash:
     git: https://github.com/caspiano/rendezvous-hash.git
