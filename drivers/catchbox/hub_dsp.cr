@@ -56,7 +56,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
     # query device info once
     schedule.in(5.seconds) do
       query_rx_device_status
-      query_tx_device_status
+      query_tx_device_status_all
       query_network_status
     end
   end
@@ -107,9 +107,22 @@ class Catchbox::HubDSP < PlaceOS::Driver
     self[:rx_firmware] = device.firmware_info if device.firmware_info
     self[:rx_serial] = device.serial if device.serial
     self[:mic1_link_state] = device.mic1_link_state if device.mic1_link_state
+      if device.mic1_link_state
+        query_tx_device_status(1)
+      end
     self[:mic2_link_state] = device.mic2_link_state if device.mic2_link_state
+      if device.mic2_link_state
+        query_tx_device_status(2)
+      end
     self[:mic3_link_state] = device.mic3_link_state if device.mic3_link_state
+      if device.mic3_link_state
+        query_tx_device_status(3)
+      end
     self[:mic4_link_state] = device.mic4_link_state if device.mic4_link_state
+      if device.mic4_link_state
+        query_tx_device_status(4)
+      end
+    
   end
 
   private def process_network(network : Network)
@@ -182,7 +195,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
     end
   end
 
-  def query_tx_device_status
+  def query_tx_device_status_all
     (1..4).each do |num|
       ["name", "firmware_info", "serial"].each do |field|
         query = ({"tx#{num}" => {"device" => {field => nil}}})
@@ -190,6 +203,14 @@ class Catchbox::HubDSP < PlaceOS::Driver
       end
     end
   end
+
+  def query_tx_device_status(index : Int32)
+      ["name", "firmware_info", "serial"].each do |field|
+        query = ({"tx#{index}" => {"device" => {field => nil}}})
+        send_request(query.to_json)
+      end
+  end 
+  
 
   def query_network_status
     ["mac", "ip_mode", "ip_address", "subnet", "gateway"].each do |field|
