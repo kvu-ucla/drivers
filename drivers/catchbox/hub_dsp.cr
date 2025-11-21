@@ -115,7 +115,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
       {device.mic3_link_state, 3},
       {device.mic4_link_state, 4}
     ].each do |(state, num)|
-      self[:"mic#{num}_link_state"] = state
+      self["mic#{num}_link_state"] = state
       if state.in?(LinkState::Connected, LinkState::Charging)
         query_tx_device_status(num)
       end
