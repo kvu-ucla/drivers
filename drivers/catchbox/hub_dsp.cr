@@ -102,27 +102,24 @@ class Catchbox::HubDSP < PlaceOS::Driver
   end
 
   private def process_device(device : Device)
+    #process RX info
     self[:rx_device_type] = device.device_type if device.device_type
     self[:rx_device_name] = device.name if device.name
     self[:rx_firmware] = device.firmware_info if device.firmware_info
     self[:rx_serial] = device.serial if device.serial
-    self[:mic1_link_state] = device.mic1_link_state if device.mic1_link_state
-      if device.mic1_link_state
-        query_tx_device_status(1)
+
+    #process RX link info
+    [
+      {device.mic1_link_state, 1},
+      {device.mic2_link_state, 2},
+      {device.mic3_link_state, 3},
+      {device.mic4_link_state, 4}
+    ].each do |(state, num)|
+      self[:"mic#{num}_link_state"] = state
+      if state.in?(LinkState::Connected, LinkState::Charging)
+        query_tx_device_status(num)
       end
-    self[:mic2_link_state] = device.mic2_link_state if device.mic2_link_state
-      if device.mic2_link_state
-        query_tx_device_status(2)
-      end
-    self[:mic3_link_state] = device.mic3_link_state if device.mic3_link_state
-      if device.mic3_link_state
-        query_tx_device_status(3)
-      end
-    self[:mic4_link_state] = device.mic4_link_state if device.mic4_link_state
-      if device.mic4_link_state
-        query_tx_device_status(4)
-      end
-    
+    end
   end
 
   private def process_network(network : Network)
