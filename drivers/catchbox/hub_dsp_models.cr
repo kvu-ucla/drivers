@@ -111,4 +111,11 @@ module Catchbox
     property mute : Int32?
     property activity : Int32?
   end
+
+  enum LinkState
+    Disconnected
+    Connected
+    Pairing
+    Charging
+  end
 end
