@@ -145,7 +145,8 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     return unless inputs_hash
 
     inputs_hash.each do |input_name, input_val|
-      key = "#{input_name.downcase}_sync"
+      friendly_input = input_val["UserSpecifiedName"].as_s.downcase.delete(" ")
+      key = "#{friendly_input}_sync"
 
       # Default to false
       sync_detected = false
