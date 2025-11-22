@@ -25,6 +25,8 @@ class Crestron::Tsw1070 < PlaceOS::Driver
 
     http_keep_alive_seconds: 600,
     http_max_requests:       1200,
+    base_url: "https://placeos-nonprod.avit.it.ucla.edu/control-av/#/sys-I-_pptn4a5",
+    x_api_key: ""
   })
 
   @monitoring : Bool = false
@@ -49,7 +51,10 @@ class Crestron::Tsw1070 < PlaceOS::Driver
       return
     end
 
-    schedule.in(2.seconds) { poll_device_info }
+    schedule.in(2.seconds) { 
+      poll_device_info 
+      app_check
+    }
     @lock.synchronize do
       if !@monitoring
         spawn { event_monitor }
@@ -64,18 +69,25 @@ class Crestron::Tsw1070 < PlaceOS::Driver
   def poll_device_info
     response = get("/Device/DeviceInfo", concurrent: true)
     raise "unexpected response code: #{response.status_code}" unless response.success?
-
-    payload = JSON.parse(response.body)
-    device_info_json = payload.dig("Device", "DeviceInfo")
-
-    # Parse the response using the DeviceInfo model
-    device_info = Crestron::DeviceInfo.from_json(device_info_json.to_json)
-
-    # Store complete info
+    
+    payload = JSON.parse(response.body) 
+    device_info_json = payload["Device"]["DeviceInfo"].to_json
+    
+    device_info = Crestron::DeviceInfo.from_json(device_info_json)
     self[:device_info] = device_info
-
+    
     device_info
   end
+
+  def poll_third_party_app
+    response = get("/Device/ThirdPartyApplications")
+    raise "unexpected response code: #{response.status_code}" unless response.success?
+
+    payload = JSON.parse(response.body)
+    device_app_info = payload.dig("Device", "ThirdPartyApplications")
+
+    device_app_info = Crestron::
+  end  
 
   # Long polling for real-time updates
   def event_monitor
