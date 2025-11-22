@@ -51,9 +51,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
       return
     end
 
-    schedule.in(2.seconds) { 
-      poll_device_info 
-    }
+    poll_device_info 
     @lock.synchronize do
       if !@monitoring
         spawn { event_monitor }
