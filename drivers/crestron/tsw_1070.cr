@@ -24,9 +24,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
     password: "admin",
 
     http_keep_alive_seconds: 600,
-    http_max_requests:       1200,
-    base_url:                "https://placeos-nonprod.avit.it.ucla.edu/control-av/#/sys-I-_pptn4a5",
-    x_api_key:               "",
+    http_max_requests:       1200
   })
 
   @monitoring : Bool = false
@@ -46,7 +44,7 @@ class Crestron::Tsw1070 < PlaceOS::Driver
 
   def connected
     if !authenticated?
-      # connected is called again by the authenticate function
+      # connected is called again by the authenticate function.
       spawn { authenticate }
       return
     end
@@ -76,27 +74,14 @@ class Crestron::Tsw1070 < PlaceOS::Driver
     device_info
   end
 
-  # TODO
-  # def poll_third_party_app
-  #   response = get("/Device/ThirdPartyApplications")
-  #   raise "unexpected response code: #{response.status_code}" unless response.success?
-
-  #   payload = JSON.parse(response.body)
-  #   device_app_info = payload.dig("Device", "ThirdPartyApplications")
-
-  #   device_app_info = Crestron::
-  # end
-
   # Long polling for real-time updates
   def event_monitor
     loop do
       break if terminated?
       if authenticated?
-        # sleep if long poll failed
         logger.debug { "event monitor: performing long poll" }
         sleep 1.second unless long_poll
       else
-        # sleep if not authenticated
         logger.debug { "event monitor: idling as not authenticated" }
         sleep 1.second
       end
