@@ -5,31 +5,36 @@ module Panasonic::Projector
   struct PowerState
     include JSON::Serializable
 
+    @[JSON::Field(key: "power-state")]
     property state : String # "standby" or "on"
   end
 
   struct InputState
     include JSON::Serializable
 
+    @[JSON::Field(key: "input-state")]
     property state : String # "COMPUTER", "HDMI1", "HDMI2", "MEMORY VIEWER", "NETWORK", "DIGITAL LINK"
   end
 
   struct ShutterState
     include JSON::Serializable
 
+    @[JSON::Field(key: "av-mute-state")]
     property state : String # "open" or "close"
   end
 
   struct FreezeState
     include JSON::Serializable
 
-    property state : String # "off" or "on"
+    @[JSON::Field(key: "freeze-state")]
+    property state : String # "on" or "off"
   end
 
   struct SignalInformation
     include JSON::Serializable
 
-    property infomation : String # Note: API uses "infomation" (typo in API)
+    @[JSON::Field(key: "signal-information")]
+    property infomation : String # "NO SIGNAL" 
   end
 
   # Error status
@@ -123,6 +128,7 @@ module Panasonic::Projector
   struct HTTPSConfig
     include JSON::Serializable
 
+    @[JSON::Field(key: "https-state")]
     property state : String # "on" or "off"
   end
 
@@ -130,6 +136,7 @@ module Panasonic::Projector
   struct LightsResponse
     include JSON::Serializable
 
+    @[JSON::Field(key: "lights")]
     property lights : Array(Panasonic::Projector::LightStatus)
   end
 
@@ -137,6 +144,7 @@ module Panasonic::Projector
   struct TemperaturesResponse
     include JSON::Serializable
 
+    @[JSON::Field(key: "temperatures")]
     property temperatures : Array(Panasonic::Projector::TemperatureInfo)
   end
 end

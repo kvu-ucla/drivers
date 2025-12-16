@@ -72,8 +72,8 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       query_power_status
       query_input_status
       query_temperatures
-      query_shutter_status
-      query_freeze_status
+      query_av_mute_status
+      # query_freeze_status
     end
   end
 
@@ -161,7 +161,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
   # ====== Powerable Interface ======
 
   def power(state : Bool)
-    body = {state: state ? "on" : "standby"}.to_json
+    body = {"power-state": state ? "on" : "standby"}.to_json
     response = put_with_digest_auth("/power", body)
 
     unless response.success?
@@ -207,7 +207,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
   def switch_to(input : Input)
     input_str = INPUT_MAPPING[input]
-    body = {state: input_str}.to_json
+    body = {"input-state": input_str}.to_json
 
     response = put_with_digest_auth("/input", body)
 
@@ -236,30 +236,30 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
   # ====== Shutter Control ======
 
-  def mute(state : Bool)
-    body = {state: state ? "close" : "open"}.to_json
+  def av_mute(state : Bool)
+    body = {"av-mute-state": state ? "on" : "off"}.to_json
 
-    response = put_with_digest_auth("/shutter", body)
+    response = put_with_digest_auth("/av-mute", body)
 
     unless response.success?
       raise "Shutter command failed: #{response.status_code} - #{response.body}"
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:mute] = result.state == "close"
+    self[:mute] = result.state == "off"
 
     result.state
   end
 
-  def query_shutter_status
-    response = get_with_digest_auth("/shutter")
+  def query_av_mute_status
+    response = get_with_digest_auth("/av-mute")
 
     unless response.success?
       raise "Shutter query failed: #{response.status_code}"
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:mute] = result.state == "close"
+    self[:mute] = result.state == "off"
 
     result.state
   end
@@ -349,7 +349,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
   # # Remove
   def query_light(light_id : Int32)
-    response = get_with_digest_auth("/lights#{light_id}")
+    response = get_with_digest_auth("/lights/#{light_id}")
 
     unless response.success?
       raise "Light query failed: #{response.status_code}"
@@ -412,7 +412,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
   end
 
   def query_temperature(temp_id : Int32)
-    response = get_with_digest_auth("/temperatures#{temp_id}")
+    response = get_with_digest_auth("/temperatures/#{temp_id}")
 
     unless response.success?
       raise "Temperature query failed: #{response.status_code}"
