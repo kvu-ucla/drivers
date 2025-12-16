@@ -59,7 +59,7 @@ module Panasonic::Projector
     include JSON::Serializable
 
     @[JSON::Field(key: "light-id")]
-    property light_id : Int32
+    property light_id : String
 
     @[JSON::Field(key: "light-name")]
     property light_name : String
@@ -68,7 +68,7 @@ module Panasonic::Projector
     property light_state : String # "on" or "off"
 
     @[JSON::Field(key: "light-runtime")]
-    property light_runtime : Int32 # Runtime in hours
+    property light_runtime : String # Runtime in hours
   end
 
   # Device information
@@ -100,17 +100,17 @@ module Panasonic::Projector
   struct TemperatureInfo
     include JSON::Serializable
 
-    @[JSON::Field(key: "temperatures-id")]
-    property temperatures_id : Int32
+    @[JSON::Field(key: "temperature-id")]
+    property temperatures_id : String
 
-    @[JSON::Field(key: "temperatures-name")]
+    @[JSON::Field(key: "temperature-name")]
     property temperatures_name : String
 
-    @[JSON::Field(key: "temperatures-celsius")]
-    property temperatures_celsius : Int32
+    @[JSON::Field(key: "temperature-celsius")]
+    property temperatures_celsius : String
 
-    @[JSON::Field(key: "temperatures-kelvin")]
-    property temperatures_kelvin : Int32
+    @[JSON::Field(key: "temperature-kelvin")]
+    property temperatures_kelvin : String
   end
 
   # NTP settings

@@ -8,6 +8,7 @@ require "./ppnd_models"
 # Base URL: https://{ip-address}/api/v1/
 # Protocol: HTTP/HTTPS with JSON responses
 # Authentication: Digest
+# Change from version 2.99 => 3.00
 
 class Panasonic::Projector::PPND < PlaceOS::Driver
   include Interface::Powerable
