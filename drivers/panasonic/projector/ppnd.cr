@@ -267,6 +267,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
   # ====== Freeze Control ======
 
+  # only accessible when the projector is on
   def freeze(state : Bool)
     body = {state: state ? "on" : "off"}.to_json
 
@@ -339,28 +340,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     lights = lights_response.lights
     self[:lights] = lights
 
-    # Store individual light states
-    lights.each do |light|
-      self["light_#{light.light_id}_state"] = light.light_state
-      self["light_#{light.light_id}_runtime"] = light.light_runtime
-    end
-
     lights
-  end
-
-  # # Remove
-  def query_light(light_id : Int32)
-    response = get_with_digest_auth("/lights/#{light_id}")
-
-    unless response.success?
-      raise "Light query failed: #{response.status_code}"
-    end
-
-    light = Panasonic::Projector::LightStatus.from_json(response.body)
-    self["light_#{light.light_id}_state"] = light.light_state
-    self["light_#{light.light_id}_runtime"] = light.light_runtime
-
-    light
   end
 
   def query_device_info
@@ -403,27 +383,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     temps = temps_response.temperatures
     self[:temperatures] = temps
 
-    # Store individual temperature readings
-    temps.each do |temp|
-      self["temp_#{temp.temperatures_id}_name"] = temp.temperatures_name
-      self["temp_#{temp.temperatures_id}_celsius"] = temp.temperatures_celsius
-    end
-
     temps
-  end
-
-  def query_temperature(temp_id : Int32)
-    response = get_with_digest_auth("/temperatures/#{temp_id}")
-
-    unless response.success?
-      raise "Temperature query failed: #{response.status_code}"
-    end
-
-    temp = Panasonic::Projector::TemperatureInfo.from_json(response.body)
-    self["temp_#{temp.temperatures_id}_name"] = temp.temperatures_name
-    self["temp_#{temp.temperatures_id}_celsius"] = temp.temperatures_celsius
-
-    temp
   end
 
   # ====== Settings ======
