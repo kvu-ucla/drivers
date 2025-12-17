@@ -3,6 +3,7 @@ require "placeos-driver"
 # Driver for Zoom Room ZR-CSAPI (Legacy SSH Control System API)
 # Connects to Zoom Room machines via SSH on port 2244
 # API Documentation: https://developers.zoom.us/docs/rooms/cli/
+
 class Zoom::ZrCSAPI < PlaceOS::Driver
   descriptive_name "Zoom Room ZR-CSAPI"
   generic_name :ZoomCSAPI
@@ -23,6 +24,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   @debug_enabled : Bool = false
   @response_delay : Int32 = 500
   @current_time : Int64 = Time.utc.to_unix
+  @connection_timeout_schedule : PlaceOS::Driver::Proxy::Scheduler::TaskWrapper? = nil
 
   def on_load
     queue.wait = false
@@ -52,7 +54,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     @current_time = Time.utc.to_unix
     if list = self[:Bookings]?
       determine_current_booking(list.as_a)
-      determine_next_booking(list.as_a) 
+      determine_next_booking(list.as_a)
     end
   end
 
@@ -62,7 +64,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     #   initialize_tokenizer unless @ready || @init_called
     # end
     # we need to disconnect if we don't see welcome message
-    schedule.in(9.seconds) do
+    @connection_timeout_schedule = schedule.in(9.seconds) do
       if !ready?
         logger.error { "ZR-CSAPI connection failed to be ready after 9 seconds." }
         disconnect
@@ -75,7 +77,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   def disconnected
     reset_connection_flags
     queue.clear abort_current: true
-    schedule.clear
+    @connection_timeout_schedule.try &.cancel
     logger.debug { "Disconnected from Zoom Room ZR-CSAPI" }
     self[:connected] = false
   end
@@ -161,7 +163,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     end
     current_booking = bookings.find do |booking|
       next if booking["isInstantMeeting"] == true
-      booking["startTime"].as_i64 > @current_time
+      booking["startTime"].as_i64 > @current_time && booking["endTime"].as_i64 > @current_time
     end
 
     self[:current_booking] = current_booking
@@ -169,24 +171,16 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   end
 
   # determine next booking, i.e. booking that is directly after current booking
-  # assumes the Zoom bookings are sorted by start time, which the case after transforming
+  # assumes the Zoom bookings are sorted by start time, which is the case after transforming
   def determine_next_booking(bookings : Array(JSON::Any))
     if bookings.empty?
       self[:next_booking] = nil
       return
     end
 
-    current_booking = self[:current_booking]?
-
-    if current_booking
-      # Find the meeting that starts after current booking
-      current_start_time = current_booking["startTime"].as_i64
-      next_booking = bookings.find do |booking|
-        next if booking["isInstantMeeting"] == true
-        booking["startTime"].as_i64 > current_start_time
-      end
-    else
-      next_booking = nil
+    next_booking = bookings.find do |booking|
+      next if booking["isInstantMeeting"] == true
+      booking["startTime"].as_i64 > @current_time
     end
 
     self[:next_booking] = next_booking
@@ -762,10 +756,9 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     unless ready?
       if response.includes?("ZAAPI") # Initial connection message
         queue.clear abort_current: true
+        @connection_timeout_schedule.try &.cancel
         do_send("echo off", name: "echo_off")
-        schedule.clear
         do_send("format json", name: "set_format")
-        schedule.clear
         initialize_tokenizer unless @init_called
         fetch_initial_state
       else
