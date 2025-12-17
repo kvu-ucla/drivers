@@ -1,5 +1,6 @@
 require "placeos-driver"
 require "placeos-driver/interface/powerable"
+require "placeos-driver/interface/muteable"
 require "placeos-driver/interface/switchable"
 require "http-client-digest_auth"
 require "./ppnd_models"
@@ -12,6 +13,7 @@ require "./ppnd_models"
 
 class Panasonic::Projector::PPND < PlaceOS::Driver
   include Interface::Powerable
+  include Interface::Muteable
 
   enum Input
     COMPUTER
@@ -208,6 +210,9 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
   INPUT_REVERSE_MAPPING = INPUT_MAPPING.invert
 
   def switch_to(input : Input)
+
+    unmute if self[:mute]?
+
     input_str = INPUT_MAPPING[input]
     body = {"input-state": input_str}.to_json
 
@@ -238,7 +243,10 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
   # ====== Shutter Control ======
 
-  def av_mute(state : Bool)
+  def mute(state : Bool = true,
+    index : Int32 | String = 0,
+    layer : MuteLayer = MuteLayer::AudioVideo,
+  )
     body = {"av-mute-state": state ? "on" : "off"}.to_json
 
     response = put_with_digest_auth("/av-mute", body)
