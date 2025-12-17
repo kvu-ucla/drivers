@@ -74,6 +74,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       query_input_status
       query_temperatures
       query_av_mute_status
+      query_lights
       # query_freeze_status
     end
   end
@@ -247,7 +248,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:mute] = result.state == "off"
+    self[:av_mute] = result.state == "on"
 
     result.state
   end
@@ -260,7 +261,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:mute] = result.state == "off"
+    self[:av_mute] = result.state == "on"
 
     result.state
   end
