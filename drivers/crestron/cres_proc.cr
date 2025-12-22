@@ -40,7 +40,8 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
     line = String.new(bytes)
     data = JSON.parse(line)
 
-    incoming = data["digital-io1"]?.try &.as_bool?
+    incoming_str = data["digital-io1"]?.try &.as_s?
+    incoming = incoming_str == "true" if incoming_str
 
     if incoming.nil?
       logger.warn { "unrecognized boolean payload: #{line.inspect}" }
