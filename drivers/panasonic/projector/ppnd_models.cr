@@ -34,7 +34,7 @@ module Panasonic::Projector
     include JSON::Serializable
 
     @[JSON::Field(key: "signal-information")]
-    property infomation : String # "NO SIGNAL" 
+    property information : String # "NO SIGNAL"
   end
 
   # Error status

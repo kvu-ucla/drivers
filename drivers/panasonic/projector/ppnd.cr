@@ -210,7 +210,6 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
   INPUT_REVERSE_MAPPING = INPUT_MAPPING.invert
 
   def switch_to(input : Input)
-
     unmute if self[:mute]?
 
     input_str = INPUT_MAPPING[input]
@@ -244,9 +243,8 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
   # ====== Shutter Control ======
 
   def mute(state : Bool = true,
-    index : Int32 | String = 0,
-    layer : MuteLayer = MuteLayer::AudioVideo,
-  )
+           index : Int32 | String = 0,
+           layer : MuteLayer = MuteLayer::AudioVideo,)
     body = {"av-mute-state": state ? "on" : "off"}.to_json
 
     response = put_with_digest_auth("/av-mute", body)
@@ -256,7 +254,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:av_mute] = result.state == "on"
+    self[:mute] = result.state == "on"
 
     result.state
   end
@@ -317,10 +315,10 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::SignalInformation.from_json(response.body)
-    self[:signal_info] = result.infomation
-    self[:no_signal] = result.infomation == "NO SIGNAL"
+    self[:signal_info] = result.information
+    self[:no_signal] = result.information == "NO SIGNAL"
 
-    result.infomation
+    result.information
   end
 
   def query_errors
