@@ -96,7 +96,7 @@ module Epiphan::PearlModels
 
     getter state : String?
     getter resolution : String?
-    getter actual_fps : Float64?
+    getter actual_fps : Float64
     getter codec : String?
     getter fps : Float64?
     getter real_device_name : String?

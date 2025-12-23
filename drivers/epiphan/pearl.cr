@@ -264,11 +264,12 @@ class Epiphan::Pearl < PlaceOS::Driver
       is_active = false
       if status = input.status
         if video = status.video
-          is_active = (video.state == "active")
+          is_active = (video.state == "active" && video.actual_fps > 0)
+          self["#{input.id}_video_status"] = is_active
         end
       end
-      self["#{input.id}_video_status"] = is_active
     end
+    
     input_status
   end
 
