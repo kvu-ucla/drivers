@@ -1496,7 +1496,7 @@ class Place::Meet < PlaceOS::Driver
 
       if new_state
         logger.debug { "shutting system down" }
-        set_power_state(new_state)
+        set_power_state(false)
       else
         logger.debug { "do nothing" }
       end
