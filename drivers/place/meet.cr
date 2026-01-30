@@ -1491,11 +1491,17 @@ class Place::Meet < PlaceOS::Driver
 
   protected def init_fls 
     system.subscribe(:CrestronInterface_1, :state) do |_sub, fls_state|
-      logger.debug { "fls state: #{fls_state}" }
-      if fls_state
+      new_state = JSON.parse(fls_state).as_bool?
+      logger.debug { "fls state: #{new_state}" }
+
+      if new_state
         logger.debug { "shutting system down" }
-        set_power_state(fls_state)
+        set_power_state(new_state)
       else
         logger.debug { "do nothing" }
+      end
+
+    end  
+  end
 
 end
