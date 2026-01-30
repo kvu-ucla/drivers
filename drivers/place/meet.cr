@@ -116,6 +116,7 @@ class Place::Meet < PlaceOS::Driver
       init_lighting
       init_vidconf
       init_joining
+      init_fls
     end
 
     # initialize all the extentsions
@@ -1483,4 +1484,18 @@ class Place::Meet < PlaceOS::Driver
     @remote_systems = nil
     @remote_rooms = nil
   end
+
+  # =========================
+  # FLS Subscription 
+  # =========================  
+
+  protected def init_fls 
+    system.subscribe(:CrestronInterface_1, :state) do |_sub, fls_state|
+      logger.debug { "fls state: #{fls_state}" }
+      if fls_state
+        logger.debug { "shutting system down" }
+        set_power_state(fls_state)
+      else
+        logger.debug { "do nothing" }
+
 end
