@@ -81,6 +81,7 @@ class Place::Meet < PlaceOS::Driver
   @auto_route_on_join : Bool = false
   DEFAULT_DSP_MOD = "Mixer_1"
   @mixer_module : String = DEFAULT_DSP_MOD
+  @fls_active : Bool = false
 
   # core includes: 'current_routes' hash
   # but we override it here for LLM integration
@@ -1490,18 +1491,27 @@ class Place::Meet < PlaceOS::Driver
   # =========================  
 
   protected def init_fls 
+    # Subscribe to Crestron Interface I/O State
     system.subscribe(:CrestronInterface_1, :state) do |_sub, fls_state|
-      new_state = JSON.parse(fls_state).as_bool?
-      logger.debug { "fls state: #{new_state}" }
+      new_state = JSON.parse(fls_state).as_bool? || false
+      logger.debug { "FLS state: #{new_state}" }
+
+      @fls_active = new_state
 
       if new_state
-        logger.debug { "shutting system down" }
+        logger.debug { "FLS Active, shutting system shutdown" }
         set_power_state(false)
       else
-        logger.debug { "do nothing" }
+        logger.debug { "FLS Cleared" }
       end
-
-    end  
+    end
+    # Subscribe to local active state - prevent system from turning on during FLS
+    subscribe(:active) do |_sub, active_state|
+      if @fls_active && JSON.parse(active_state).as_bool?
+        logger.debug { "System attempted to turn on during FLS - forcing off" }
+        set_power_state(false)
+      end
+    end
   end
 
 end
