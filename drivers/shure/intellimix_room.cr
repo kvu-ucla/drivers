@@ -219,10 +219,4 @@ class Shure::IntellimixRoom < PlaceOS::Driver
     logger.debug { "-- sending: #{cmd}" }
     send(cmd, **options)
   end
-
-  # def send_command(command : String)
-  #   cmd = "<"
-  #   logger.debug { "-- sending: #{command}" }
-  #   transport.send(command)
-  # end
 end

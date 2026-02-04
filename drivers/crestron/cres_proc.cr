@@ -28,7 +28,7 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
     end
   end
 
-  def do_poll
+  private def do_poll
     query
   end
 
@@ -67,6 +67,9 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
   private def publish_state
     val = @state
     return if val.nil?
-    self[:state] = val.not_nil!
+    
+    # normally open: true from FLS => true state
+    # normally closed: false from FLS => true state (inverted)
+    self[:state] = normally_open ? val : !val
   end
 end
