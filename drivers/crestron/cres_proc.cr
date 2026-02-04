@@ -9,6 +9,7 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
   default_settings({normally_open: true})
 
   @state : Bool? = nil
+  @normally_open : Bool? = true
 
   def on_load
     queue.delay = 100.milliseconds
@@ -16,7 +17,10 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
   end
 
   def on_update
-    publish_state
+    # Update no / nc setting
+    @normally_open = setting?(Bool, :normally_open)
+    do_poll
+
   end
 
   def connected
@@ -70,6 +74,6 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
     
     # normally open: true from FLS => true state
     # normally closed: false from FLS => true state (inverted)
-    self[:state] = normally_open ? val : !val
+    self[:state] = @normally_open ? val : !val
   end
 end
