@@ -4,6 +4,7 @@ require "placeos-driver/interface/muteable"
 # Documentation: https://www.shure.com/en-US/docs/commandstrings/IntelliMixRoom
 # TCP Port: 2202
 
+
 class Shure::IntellimixRoom < PlaceOS::Driver
   include Interface::AudioMuteable
 
