@@ -42,10 +42,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
     @mic_subscription = setting?(Bool, :subscribe_mics_status) || false
 
     # resub with new values
-    subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
     subscribe_mic_link_state(@link_poll_interval, @mic_subscription)
-
-    default_mic_state
   end
 
   def connected
@@ -53,7 +50,6 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
     # subscriptions
     subscribe_mic_link_state(@link_poll_interval, @mic_subscription)
-    # subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
     
     # query device info once
     schedule.in(5.seconds) do
@@ -128,17 +124,15 @@ class Catchbox::HubDSP < PlaceOS::Driver
         logger.debug { "Mic#{num} state: #{state}" }
 
         #parse previous state as string and convert to enum LinkState
-        previous_state_str = self["mic#{num}_link_state"]?.to_s
-        logger.debug { "Previous state str: #{previous_state_str}" }
-        previous_state = previous_state_str ? LinkState.parse(previous_state_str) : nil
+        previous_state_str = self["mic#{num}_link_state"]? || "Disconnected"
+        previous_state = LinkState.parse(previous_state_str)
 
         # store as string for readability 
         state_str = state.to_s
         self["mic#{num}_link_state"] = state_str
         
         # Only query/subscribe on transition from disconnected to update tx info
-        if previous_state.nil? || previous_state == LinkState::Disconnected
-          logger.debug { "Mic#{num} state changed from #{previous_state_str} to #{state_str}" }
+        if previous_state == LinkState::Disconnected
           query_tx_device_status(num)
           subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription, num)
         end
@@ -237,17 +231,6 @@ class Catchbox::HubDSP < PlaceOS::Driver
     ["mac", "ip_mode", "ip_address", "subnet", "gateway"].each do |field|
       query = ({"rx" => {"network" => {field => nil}}})
       send_request(query.to_json)
-    end
-  end
-
-  private def default_mic_state
-    [
-      {"Disconnected", 1},
-      {"Disconnected", 2},
-      {"Disconnected", 3},
-      {"Disconnected", 4},
-    ].each do |(state, num)|
-      self["mic#{num}_link_state"] = state
     end
   end
 
