@@ -121,11 +121,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
       # Check states from rx response 
       if state.in?(LinkState::Connected, LinkState::Charging)
 
-        logger.debug { "Mic#{num} state: #{state}" }
-
         #parse previous state as string and convert to enum LinkState
         previous_state_str = self["mic#{num}_link_state"]? || "Disconnected"
-        previous_state = LinkState.parse(previous_state_str)
+        previous_state = LinkState.parse(previous_state_str.to_s)
 
         # store as string for readability 
         state_str = state.to_s
