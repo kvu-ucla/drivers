@@ -139,6 +139,10 @@ class Catchbox::HubDSP < PlaceOS::Driver
         if previous_state == LinkState::Disconnected
           query_tx_device_status(num)
           subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription, num)
+        end
+        
+          # Only query rssi on transition from any other state to charging
+        if state == LinkState::Connected && previous_state != LinkState::Connected
           subscribe_mic_rssi_levels(@rssi_poll_interval, @mic_subscription, num)
         end
       else
