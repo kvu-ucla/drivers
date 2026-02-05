@@ -114,23 +114,34 @@ class Catchbox::HubDSP < PlaceOS::Driver
       {device.mic2_link_state, 2},
       {device.mic3_link_state, 3},
       {device.mic4_link_state, 4},
-    ].each do |(state, num)|
-      next unless state
+    ].each do |(state_int, num)|
+      next unless state_int
+
+      #convert state int from response as LinkState enum
+      state = LinkState.from_value(state_int)
       
       # Check states from rx response 
       if state.in?(LinkState::Connected, LinkState::Charging)
-        previous_state = self["mic#{num}_link_state"]?
-        logger.debug { "Mic#{num}: previous=#{previous_state.inspect}, current=#{state.inspect}" }
-        self["mic#{num}_link_state"] = state
+
+        logger.debug { "Mic#{num} state: #{state}" }
+
+        logger
+        #parse previous state as string and convert to enum LinkState
+        previous_state_str = self["mic#{num}_link_state"]?.to_s
+        previous_state = previous_state_str ? LinkState.parse(previous_state_str) : nil
+
+        # store as string for readability 
+        state_str = state.to_s
+        self["mic#{num}_link_state"] = state_str
         
         # Only query/subscribe on transition from disconnected to update tx info
         if previous_state.nil? || previous_state == LinkState::Disconnected
-          logger.debug { "Mic#{num}: Triggering query and subscribe!" }
+          logger.debug { "Mic#{num} state changed from #{previous_state_str} to #{state_str}" }
           query_tx_device_status(num)
           subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription, num)
         end
       else
-        self["mic#{num}_link_state"] = state
+        self["mic#{num}_link_state"] = state.to_s
       end
     end
   end
