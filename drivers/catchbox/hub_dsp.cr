@@ -120,10 +120,12 @@ class Catchbox::HubDSP < PlaceOS::Driver
       # Check states from rx response 
       if state.in?(LinkState::Connected, LinkState::Charging)
         previous_state = self["mic#{num}_link_state"]?
+        logger.debug { "Mic#{num}: previous=#{previous_state.inspect}, current=#{state.inspect}" }
         self["mic#{num}_link_state"] = state
         
         # Only query/subscribe on transition from disconnected to update tx info
         if previous_state.nil? || previous_state == LinkState::Disconnected
+          logger.debug { "Mic#{num}: Triggering query and subscribe!" }
           query_tx_device_status(num)
           subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription, num)
         end
