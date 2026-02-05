@@ -19,14 +19,19 @@ class Catchbox::HubDSP < PlaceOS::Driver
   # 425	MALFORMED_COMMAND (Command is improperly formatted)
   # 430	UNSUPPORTED_FEATURE (Returned when trying to get or set features which are not present on given product e.g. setting Mute button enable feature for Cube)
 
+  DEFAULT_POLL_INTERVAL = 3000
+
   default_settings({
     subscribe_mics_status:         true,
-    mics_battery_polling_interval: 60000,
-    mics_link_polling_interval:    30000,
+    mics_battery_polling_interval: DEFAULT_POLL_INTERVAL,
+    mics_link_polling_interval:    DEFAULT_POLL_INTERVAL,
+    mics_rssi_polling_interval:    DEFAULT_POLL_INTERVAL
   })
+
 
   @battery_poll_interval : Int32 = 0
   @link_poll_interval : Int32 = 0
+  @rssi_poll_interval : Int32 = 0
   @mic_subscription : Bool = false
 
   def on_load
@@ -37,8 +42,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
   def on_update
     # Update poll interval in ms
-    @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || 60000
-    @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || 30000
+    @battery_poll_interval = setting?(Int32, :mics_battery_polling_interval) || DEFAULT_POLL_INTERVAL
+    @link_poll_interval = setting?(Int32, :mics_link_polling_interval) || DEFAULT_POLL_INTERVAL
+    @rssi_poll_interval = setting?(Int32, :mics_rssi_polling_interval) || DEFAULT_POLL_INTERVAL
     @mic_subscription = setting?(Bool, :subscribe_mics_status) || false
 
     # resub with new values
@@ -133,6 +139,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
         if previous_state == LinkState::Disconnected
           query_tx_device_status(num)
           subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription, num)
+          subscribe_mic_rssi_levels(@rssi_poll_interval, @mic_subscription, num)
         end
       else
         self["mic#{num}_link_state"] = state.to_s
@@ -199,6 +206,21 @@ class Catchbox::HubDSP < PlaceOS::Driver
         "subscribe" => [{
           "#"  => {"enable" => enable, "period_ms" => period_ms},
           "rx" => {"device" => {"mic#{num}_link_state" => nil}},
+        }],
+      }
+      send_request(sub.to_json)
+    end
+  end
+
+  # Microphone RSSI Status
+  def subscribe_mic_rssi_levels(period_ms : Int32, enable : Bool, index : Int32? = nil)
+    indices = index ? [index] : (1..4).to_a
+    
+    indices.each do |num|
+      sub = {
+        "subscribe" => [{
+          "#"        => {"enable" => enable, "period_ms" => period_ms},
+          "tx#{num}" => {"device" => {"rssi" => nil}},
         }],
       }
       send_request(sub.to_json)
