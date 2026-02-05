@@ -125,9 +125,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
         logger.debug { "Mic#{num} state: #{state}" }
 
-        logger
         #parse previous state as string and convert to enum LinkState
         previous_state_str = self["mic#{num}_link_state"]?.to_s
+        logger.debug { "Previous state str: #{previous_state_str}" }
         previous_state = previous_state_str ? LinkState.parse(previous_state_str) : nil
 
         # store as string for readability 
