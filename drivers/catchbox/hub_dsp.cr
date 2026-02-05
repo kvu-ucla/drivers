@@ -44,15 +44,17 @@ class Catchbox::HubDSP < PlaceOS::Driver
     # resub with new values
     subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
     subscribe_mic_link_state(@link_poll_interval, @mic_subscription)
+
+    default_mic_state
   end
 
   def connected
     logger.debug { "Connected to Catchbox Hub DSP" }
 
     # subscriptions
-    subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
     subscribe_mic_link_state(@link_poll_interval, @mic_subscription)
-
+    # subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription)
+    
     # query device info once
     schedule.in(5.seconds) do
       query_rx_device_status
@@ -237,4 +239,16 @@ class Catchbox::HubDSP < PlaceOS::Driver
       send_request(query.to_json)
     end
   end
+
+  private def default_mic_state
+    [
+      {"Disconnected", 1},
+      {"Disconnected", 2},
+      {"Disconnected", 3},
+      {"Disconnected", 4},
+    ].each do |(state, num)|
+      self["mic#{num}_link_state"] = state
+    end
+  end
+
 end
