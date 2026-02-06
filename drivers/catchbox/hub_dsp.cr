@@ -128,8 +128,8 @@ class Catchbox::HubDSP < PlaceOS::Driver
       if state.in?(LinkState::Connected, LinkState::Charging)
 
         #parse previous state as string and convert to enum LinkState
-        previous_state_str = self["mic#{num}_link_state"]? || "Disconnected"
-        previous_state = LinkState.parse(previous_state_str.to_s)
+        previous_state_str = self["mic#{num}_link_state"]?.to_s || "Disconnected"
+        previous_state = LinkState.parse(previous_state_str)
 
         # store as string for readability 
         state_str = state.to_s
@@ -140,7 +140,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
           query_tx_device_status(num)
           subscribe_mic_battery_levels(@battery_poll_interval, @mic_subscription, num)
         end
-        
+
           # Only query rssi on transition from any other state to charging
         if state == LinkState::Connected && previous_state != LinkState::Connected
           subscribe_mic_rssi_levels(@rssi_poll_interval, @mic_subscription, num)
@@ -153,7 +153,9 @@ class Catchbox::HubDSP < PlaceOS::Driver
 
   private def process_network(network : Network)
     self[:ip_address] = network.ip_address if network.ip_address
-    self[:ip_mode] = network.ip_mode if network.ip_mode
+    if ip_mode = network.ip_mode
+      self[:ip_mode] = IpMode.from_value(ip_mode).to_s
+    end
     self[:mac] = network.mac if network.mac
     self[:subnet] = network.subnet if network.subnet
     self[:gateway] = network.gateway if network.gateway
@@ -171,7 +173,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
     # TODO #
   end
 
-  # # Subscriptions ##
+  ## Subscriptions ##
 
   # Microphone Mute State
   def subscribe_mic_mute_states(period_ms : Int32, enable : Bool)

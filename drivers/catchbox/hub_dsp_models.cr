@@ -118,4 +118,9 @@ module Catchbox
     Pairing
     Charging
   end
+
+  enum IpMode
+    Dynamic = 2
+    Static = 4
+  end
 end
