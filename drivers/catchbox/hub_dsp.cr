@@ -154,7 +154,10 @@ class Catchbox::HubDSP < PlaceOS::Driver
   private def process_network(network : Network)
     self[:ip_address] = network.ip_address if network.ip_address
     if ip_mode = network.ip_mode
-      self[:ip_mode] = IpMode.from_value(ip_mode).to_s
+      logger.debug {"{IP Mode: #{ip_mode}}"}
+      ip_mode_str = IpMode.from_value(ip_mode).to_s
+      self[:ip_mode] = ip_mode_str
+      logger.debug {"{IP Mode String: #{ip_mode_str}}"}
     end
     self[:mac] = network.mac if network.mac
     self[:subnet] = network.subnet if network.subnet
