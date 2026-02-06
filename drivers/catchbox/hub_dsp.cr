@@ -11,6 +11,7 @@ class Catchbox::HubDSP < PlaceOS::Driver
   description "Controls Catchbox Hub DSP receiver for wireless microphone management. Configure IP address and UDP port in device settings."
   generic_name :Mixer
 
+  
   # Error Codes
   # 0	OK (Command executed successfully)
   # 405	VALUE_OUT_OF_BOUNDS (Supplied value is outside the allowed parameter range)
