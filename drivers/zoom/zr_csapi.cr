@@ -20,7 +20,6 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     milliseconds_until_response: 500,
   })
 
-  
   getter? ready : Bool = false
   @debug_enabled : Bool = false
   @response_delay : Int32 = 500
