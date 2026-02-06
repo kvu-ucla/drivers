@@ -349,4 +349,5 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
       logger.debug { "unsolicited parse error: #{e.message}" }
     end
   end
+  
 end

@@ -147,4 +147,5 @@ class Crestron::NvxTx < Crestron::CresNext # < PlaceOS::Driver
       end
     end
   end
+  
 end
