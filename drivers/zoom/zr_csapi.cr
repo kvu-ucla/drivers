@@ -4,6 +4,7 @@ require "placeos-driver"
 # Connects to Zoom Room machines via SSH on port 2244
 # API Documentation: https://developers.zoom.us/docs/rooms/cli/
 
+
 class Zoom::ZrCSAPI < PlaceOS::Driver
   descriptive_name "Zoom Room ZR-CSAPI"
   generic_name :ZoomCSAPI
