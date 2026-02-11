@@ -1,6 +1,9 @@
 require "placeos-driver"
 require "json"
 
+# SIMPL interface to interact with the digital I/O 1 port of an RMC4 running a custom program.
+# TCP Port: 9001
+
 class Crestron::SIMPLInterface < PlaceOS::Driver
   descriptive_name "Crestron - SIMPL Interface"
   generic_name :CrestronInterface
