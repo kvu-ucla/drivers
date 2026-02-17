@@ -43,6 +43,7 @@ class Epiphan::Pearl < PlaceOS::Driver
   def on_update
     @poll_every = setting?(Int32, :poll_every) || 30
 
+    init_camera_map
     schedule.clear
     schedule.every(@poll_every.seconds) { poll_status }
     schedule.in(2.seconds) { poll_status }
