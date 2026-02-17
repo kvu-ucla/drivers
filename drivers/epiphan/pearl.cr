@@ -54,6 +54,7 @@ class Epiphan::Pearl < PlaceOS::Driver
       poll_status
       get_firmware
       get_connectivity_details
+      init_camera_map
     }
   end
 
@@ -252,24 +253,25 @@ class Epiphan::Pearl < PlaceOS::Driver
     status
   end
 
-  def get_inputs_status
-    response = get("/api/v2.0/inputs/status")
+  def get_inputs_status(type : String? = nil)
+    path = "/api/v2.0/inputs/status"
+    path += "?types=#{type}" if type
+
+    response = get(path)
     raise "Failed to get inputs status: #{response.status_code}" unless response.success?
 
     status_response = Epiphan::PearlModels::InputStatusResponse.from_json(response.body.not_nil!)
     raise "API returned error: #{status_response.status}" unless status_response.status == "ok"
 
-    input_status = status_response.result
     status_response.result.each do |input|
-      is_active = false
-      if status = input.status
-        if video = status.video
-          is_active = (video.state == "active")
-        end
+      if video = input.status.try(&.video)
+        #check if video is has valid FPS and is active
+        is_active = video.state == "active" && (video.actual_fps || 0.0) > 0
+        self["#{input.id}_video_status"] = is_active
       end
-      self["#{input.id}_video_status"] = is_active
     end
-    input_status
+
+    status_response.result
   end
 
   def list_publishers(channel_id : String)
@@ -327,6 +329,12 @@ class Epiphan::Pearl < PlaceOS::Driver
     publishers = list_publishers(channel_id)
     publishers.any? { |pub| pub.status && pub.status.try &.state == Epiphan::PearlModels::StreamingState::Started }
   end
+
+  def init_camera_map
+    @camera_map = setting?(Hash(String, String), :camera_map) || {} of String => String
+    self[:camera_map] = @camera_map
+  end
+
 
   private def poll_status
     begin
