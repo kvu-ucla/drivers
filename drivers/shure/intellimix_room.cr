@@ -29,7 +29,7 @@ class Shure::IntellimixRoom < PlaceOS::Driver
     schedule.clear
   end
 
-  # Device Information
+  # Device Information:
   def get_device_info
     do_send "GET MODEL", name: :get_device_model, priority: 0
     do_send "GET FW_VER", name: :get_firmware_version, priority: 0
@@ -161,11 +161,11 @@ class Shure::IntellimixRoom < PlaceOS::Driver
   end
 
   # === Interface::AudioMuteable Implementation ===
-  
+
   def mute_audio(state : Bool = true, index : Int32 | String = 0)
     set_audio_mute(index.to_i, state)
   end
-  
+
   def mute(state : Bool = true)
     set_device_audio_mute(state)
   end
@@ -179,7 +179,7 @@ class Shure::IntellimixRoom < PlaceOS::Driver
     logger.debug { "-- received: #{data}" }
 
     response = data.lstrip("< REP ").rstrip(" >")
-    parts = response.split
+    parts = tokenize(response)
     return task.try(&.abort("Empty response")) if parts.empty?
 
     # Handle error responses
@@ -213,6 +213,34 @@ class Shure::IntellimixRoom < PlaceOS::Driver
       logger.warn { "Unknown response format: #{response}" }
     end
     task.try(&.success)
+  end
+
+  def tokenize(input : String) : Array(String)
+    tokens = [] of String
+    i = 0
+    n = input.bytesize
+
+    while i < n
+      case input[i]
+      when '{'
+        # find closing brace
+        j = input.index('}', i) || raise "missing }"
+        tokens << input[i + 1, j - i - 1].strip
+        i = j + 1
+      when ' ', '\t', '\n'
+        i += 1
+      else
+        # normal word
+        j = i
+        while j < n && !input[j].whitespace? && input[j] != '{'
+          j += 1
+        end
+        tokens << input[i, j - i]
+        i = j
+      end
+    end
+
+    tokens
   end
 
   protected def do_send(*command, **options)

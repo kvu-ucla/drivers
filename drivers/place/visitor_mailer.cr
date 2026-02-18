@@ -157,7 +157,6 @@ class Place::VisitorMailer < PlaceOS::Driver
 
     @booking_space_name = setting?(String, :booking_space_name).presence || "Client Floor"
 
-
     @uri = URI.parse(setting?(String, :domain_uri) || "")
     @jwt_private_key = setting?(String, :jwt_private_key) || PlaceOS::Model::JWTBase.private_key
 
@@ -300,7 +299,7 @@ class Place::VisitorMailer < PlaceOS::Driver
     visitor_name : String?,
     host_email : String?,
     event_title : String?,
-    event_start : Int64
+    event_start : Int64,
   )
     local_start_time = Time.unix(event_start).in(@time_zone)
 
@@ -329,7 +328,7 @@ class Place::VisitorMailer < PlaceOS::Driver
     host_email : String?,
     event_title : String?,
     event_start : Int64,
-    induction_status : Induction
+    induction_status : Induction,
   )
     local_start_time = Time.unix(event_start).in(@time_zone)
 
@@ -478,7 +477,7 @@ class Place::VisitorMailer < PlaceOS::Driver
                  end
 
     guest_jwt = generate_guest_jwt(visitor_name || visitor_email, visitor_email, visitor_email, event_id, system_id || resource_id)
-    kiosk_url = "/visitor-kiosk/#/checkin/preferences?email=#{visitor_email}&jwt=#{guest_jwt}&event_id=#{event_id}"
+    kiosk_url = "/visitor-kiosk/?email=#{visitor_email}&token=#{guest_jwt}&event_id=#{event_id}#/checkin/preferences"
 
     mailer.send_template(
       visitor_email,
@@ -566,13 +565,13 @@ class Place::VisitorMailer < PlaceOS::Driver
       exp:   tomorrow_night.to_unix,
       jti:   UUID.random.to_s,
       aud:   @uri.try &.host,
-      scope: ["guest"],
+      scope: ["guest", "metadata"],
       sub:   guest_id,
       u:     {
         n: name,
         e: email,
         p: 0,
-        r: [event_id, system_id],
+        r: [event_id, system_id, building_zone.id],
       },
     }
 

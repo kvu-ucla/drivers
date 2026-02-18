@@ -43,18 +43,17 @@ class Crestron::Tsw1070 < PlaceOS::Driver
   end
 
   def connected
-    spawn do
-      authenticate unless authenticated?
-      
-      if authenticated?
-        poll_device_info
-        
-        @lock.synchronize do
-          if !@monitoring
-            spawn { event_monitor }
-            @monitoring = true
-          end
-        end
+    if !authenticated?
+      # connected is called again by the authenticate function
+      spawn { authenticate }
+      return
+    end
+
+    poll_device_info
+    @lock.synchronize do
+      if !@monitoring
+        spawn { event_monitor }
+        @monitoring = true
       end
     end
   end
@@ -74,6 +73,17 @@ class Crestron::Tsw1070 < PlaceOS::Driver
 
     device_info
   end
+
+  # TODO
+  # def poll_third_party_app
+  #   response = get("/Device/ThirdPartyApplications")
+  #   raise "unexpected response code: #{response.status_code}" unless response.success?
+
+  #   payload = JSON.parse(response.body)
+  #   device_app_info = payload.dig("Device", "ThirdPartyApplications")
+
+  #   device_app_info = Crestron::
+  # end
 
   # Long polling for real-time updates
   def event_monitor
