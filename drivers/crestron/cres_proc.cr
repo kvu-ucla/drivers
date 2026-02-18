@@ -23,7 +23,6 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
     # Update no / nc setting
     @normally_open = setting?(Bool, :normally_open)
     do_poll
-
   end
 
   def connected

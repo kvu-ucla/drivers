@@ -74,17 +74,6 @@ class Crestron::Tsw1070 < PlaceOS::Driver
     device_info
   end
 
-  # TODO
-  # def poll_third_party_app
-  #   response = get("/Device/ThirdPartyApplications")
-  #   raise "unexpected response code: #{response.status_code}" unless response.success?
-
-  #   payload = JSON.parse(response.body)
-  #   device_app_info = payload.dig("Device", "ThirdPartyApplications")
-
-  #   device_app_info = Crestron::
-  # end
-
   # Long polling for real-time updates
   def event_monitor
     loop do

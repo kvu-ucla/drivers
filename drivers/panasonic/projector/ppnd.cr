@@ -254,7 +254,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     end
 
     result = Panasonic::Projector::ShutterState.from_json(response.body)
-    self[:mute] = result.state == "on"
+    self[av_mute] = result.state == "on"
 
     result.state
   end
