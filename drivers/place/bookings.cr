@@ -41,10 +41,11 @@ class Place::Bookings < PlaceOS::Driver
     room_image:  "https://domain.com/room_image.svg",
     _sensor_mac: "device-mac",
 
-    hide_meeting_details:      false,
-    hide_meeting_title:        false,
-    enable_end_meeting_button: false,
-    max_user_search_results:   20,
+    show_tentative_meetings:      false,
+    hide_meeting_details:         false,
+    hide_meeting_title:           false,
+    enable_end_meeting_button:    false,
+    max_user_search_results:      20,
     poll_x_seconds_after_booking: 2,
 
     # use this to expose arbitrary fields to influx
@@ -71,6 +72,7 @@ class Place::Bookings < PlaceOS::Driver
   @include_cancelled_bookings : Bool = false
   @application_permissions : Bool = false
   @disable_book_now_host : Bool = false
+  @show_tentative_meetings : Bool = false
   @max_user_search_results : UInt32 = 20
   @poll_x_seconds_after_booking : UInt32 = 2
 
@@ -82,6 +84,7 @@ class Place::Bookings < PlaceOS::Driver
   @sensor_stale_minutes : Time::Span = 8.minutes
   @perform_sensor_search : Bool = true
   @sensor_mac : String? = nil
+  @room_capacity : Int32 = 0
 
   def on_update
     schedule.clear
@@ -124,6 +127,7 @@ class Place::Bookings < PlaceOS::Driver
     @cache_days = cache_days.days
 
     @change_event_sync_delay = setting?(UInt32, :change_event_sync_delay) || 5_u32
+    @show_tentative_meetings = setting?(Bool, :show_tentative_meetings) || false
 
     # ensure we don't load any millisecond timestamps
     last_started = setting?(Int64, :last_booking_started) || 0_i64
@@ -151,7 +155,7 @@ class Place::Bookings < PlaceOS::Driver
     # Write to redis last on the off chance there is a connection issue
     control_sys = config.control_system.not_nil!
     self[:room_name] = setting?(String, :room_name).presence || control_sys.display_name.presence || control_sys.name
-    self[:room_capacity] = setting?(Int32, :room_capacity) || control_sys.capacity
+    self[:room_capacity] = @room_capacity = setting?(Int32, :room_capacity) || control_sys.capacity || 0
     self[:default_title] = @default_title
     self[:disable_book_now_host] = @disable_book_now_host
     self[:disable_book_now] = @disable_book_now
@@ -299,6 +303,9 @@ class Place::Bookings < PlaceOS::Driver
     start_of_day = now.at_beginning_of_day.to_unix
     cache_period = start_of_day + @cache_days.to_i
 
+    system_id = JSON::Any.new(config.control_system.not_nil!.id)
+
+    tentative_bookings = [] of Hash(String, JSON::Any)
     events = @calendar_ids.flat_map { |cal_id|
       logger.debug { "polling events #{cal_id}, from #{start_of_day}, to #{cache_period}, in #{@time_zone.name}" }
 
@@ -308,30 +315,58 @@ class Place::Bookings < PlaceOS::Driver
         cache_period,
         @time_zone.name,
         include_cancelled: @include_cancelled_bookings
-      ).get.as_a.map do |evt|
+      ).get.as_a.compact_map do |evt|
         visibility = if evt["private"].as_bool?
                        "private"
                      else
                        evt["visibility"]?.try &.as_s?.try &.downcase || "normal"
                      end
+
+        evt = evt.as_h
         if visibility == "private"
-          evt.as_h["title"] = JSON::Any.new("Private")
-          evt.as_h["host"] = JSON::Any.new("Private")
+          evt["title"] = JSON::Any.new("Private")
+          evt["host"] = JSON::Any.new("Private")
         elsif visibility == "personal"
-          evt.as_h["title"] = evt["host"]
+          evt["title"] = evt["host"]
         elsif visibility == "confidential"
-          evt.as_h["title"] = JSON::Any.new("Confidential")
-          evt.as_h["host"] = JSON::Any.new("Confidential")
+          evt["title"] = JSON::Any.new("Confidential")
+          evt["host"] = JSON::Any.new("Confidential")
         end
+        evt["system_id"] = system_id
+
+        if evt["status"]?.try(&.as_s?) == "tentative"
+          tentative_bookings << evt
+          next nil unless @show_tentative_meetings
+        end
+
         evt
       end
     }.sort { |a, b| a["event_start"].as_i64 <=> b["event_start"].as_i64 }
 
     self[:bookings] = events
+    self[:tentative] = tentative_bookings
     check_current_booking(events)
     events
   ensure
     @polling = false
+  end
+
+  def bookings_for(email : String) : Array(JSON::Any)
+    bookings = self[:bookings]?.try(&.as_a?)
+    return [] of JSON::Any unless bookings
+    email = email.strip.downcase
+
+    bookings.select do |booking|
+      attendees = (booking["attendees"]?.try(&.as_a?) || [] of JSON::Any)
+      attend = Array(String).new(attendees.size + 1)
+      host = booking["host"]?.try(&.as_s?)
+      attend << host.downcase if host
+      attendees.each do |person|
+        pemail = person["email"]?.try(&.as_s?)
+        attend << pemail.downcase if pemail
+      end
+      attend.includes? email
+    end
   end
 
   protected def check_current_booking(bookings) : Nil
@@ -399,9 +434,21 @@ class Place::Bookings < PlaceOS::Driver
       self[:current_booking] = booking
       self[:host_email] = booking["extension_data"]?.try(&.[]?("host_override")) || booking["host"]?
       self[:started_at] = start_time
-      self[:ending_at] = ending_at ? ending_at.as_i64 : (start_time + 24.hours.to_i)
+      ending_at_calc = ending_at ? ending_at.as_i64 : (start_time + 24.hours.to_i)
+      self[:ending_at] = ending_at_calc
       self[:all_day_event] = !ending_at
       self[:event_id] = booking["id"]?
+
+      host_details = booking["extension_data"]?.try(&.[]?("host_override")) || booking["host"]?
+
+      self[:booking_details] = {
+        event_id:   booking["id"]?,
+        started_at: start_time,
+        ending_at:  ending_at_calc,
+        event_title: booking["title"]?,
+        event_host: host_details,
+        room_capacity: @room_capacity,
+      }
 
       @expose_for_analytics.each do |binding, path|
         begin

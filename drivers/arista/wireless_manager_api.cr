@@ -21,8 +21,8 @@ class Arista::WirelessManagerAPI < PlaceOS::Driver
     key_value: "ddfxxxxxxxx",
     key_type:  "apikeycredentials",
 
-    # every 3 seconds
-    polling_seconds: 3,
+    # every 120 seconds
+    polling_seconds: 120,
     _poll_locations: [28],
   })
 
@@ -47,7 +47,7 @@ class Arista::WirelessManagerAPI < PlaceOS::Driver
       new_session
     end
 
-    polling_sec = setting?(UInt32, :polling_seconds) || 3_u32
+    polling_sec = setting?(UInt32, :polling_seconds) || 120_u32
     polling_locs = setting?(Array(Int64), :poll_locations) || [] of Int64
 
     if !polling_locs.empty?
@@ -140,6 +140,18 @@ class Arista::WirelessManagerAPI < PlaceOS::Driver
     end
   end
 
+  # get the layout for each of the locations
+  def layout(for_location : String | Int64) : Layout
+    new_session unless authenticated?
+
+    query = URI::Params.build do |form|
+      form.add("locationid", for_location.to_s)
+    end
+
+    response = check get("/new/wifi/api/layouts?#{query}")
+    Layout.from_json(response.body)
+  end
+
   def client_positions(at_location : String | Int64? = nil)
     new_session unless authenticated?
 
@@ -166,7 +178,7 @@ class Arista::WirelessManagerAPI < PlaceOS::Driver
         data_url = URI.parse(loc_req.result_url).request_target
         loop do
           # always takes some time for the results to be gathered
-          sleep 200.milliseconds
+          sleep 1.second
           poll_response = check get(data_url)
 
           # the locations request is still being processed

@@ -389,7 +389,13 @@ class Place::Meet < PlaceOS::Driver
         if links = @linked_outputs[output]?
           if remote_out = links[sys_id]?
             room.route(input, remote_out, max_dist, simulate, follow_additional_routes, true)
+          else
+            room.route(input, output, max_dist, simulate: true, follow_additional_routes: false, called_from_join: true)
           end
+        else
+          # we're routing directly in this room but we want to simulate the route on the remote system
+          # so the UI stays up to date
+          room.route(input, output, max_dist, simulate: true, follow_additional_routes: false, called_from_join: true)
         end
       end
     end
@@ -406,7 +412,7 @@ class Place::Meet < PlaceOS::Driver
     raise "invalid input #{input_id}, must be one of #{keys.join(", ")}" unless input_actual
 
     power true
-    selected_input(input_actual)
+    selected_input(input_actual) rescue nil
     @outputs.each do |output|
       route(input_actual, output)
     end
@@ -1085,12 +1091,21 @@ class Place::Meet < PlaceOS::Driver
         mixer.query_mutes(mic.level_id)
       end
 
-      case mic.default_level
+      default_level = mic.default_level
+      case default_level
       in Float64
+        default_level = default_level.clamp(0.0, 100.0)
+        percentage = default_level / 100.0
+
+        # adjust into range
+        range = mic.min_level..mic.max_level
+        level_actual = percentage * (range.end - range.begin)
+        level_actual = (level_actual + range.begin.to_f).round(1)
+
         if level_index = mic.level_index
-          mixer.fader(mic.level_id, mic.default_level, level_index)
+          mixer.fader(mic.level_id, level_actual, level_index)
         else
-          mixer.fader(mic.level_id, mic.default_level)
+          mixer.fader(mic.level_id, level_actual)
         end
       in Nil
         mixer.query_faders(mic.level_id)
@@ -1100,13 +1115,21 @@ class Place::Meet < PlaceOS::Driver
 
   # level is a percentage 0.0->100.0
   def set_microphone(level : Float64, mute : Bool = false)
+    level = level.to_f.clamp(0.0, 100.0)
+    percentage = level / 100.0
+
     @local_mics.each do |mic|
       mixer = system[mic.module_id]
 
+      # adjust into range
+      range = mic.min_level..mic.max_level
+      level_actual = percentage * (range.end - range.begin)
+      level_actual = (level_actual + range.begin.to_f).round(1)
+
       if level_index = mic.level_index
-        mixer.fader(mic.level_id, level, level_index)
+        mixer.fader(mic.level_id, level_actual, level_index)
       else
-        mixer.fader(mic.level_id, level)
+        mixer.fader(mic.level_id, level_actual)
       end
 
       if mute_index = mic.mute_index
@@ -1130,6 +1153,40 @@ class Place::Meet < PlaceOS::Driver
       rescue error
         logger.warn(exception: error) { "failed to mute microphone: #{mic}" }
       end
+    end
+  end
+
+  def microphone_volume(name : String, level : Float64)
+    mic = @available_mics.find { |candidate| candidate.name == name }
+    raise "mic '#{name}' not found in system" unless mic
+
+    level = level.to_f.clamp(0.0, 100.0)
+    percentage = level / 100.0
+
+    mixer = system[mic.module_id]
+
+    # adjust into range
+    range = mic.min_level..mic.max_level
+    level_actual = percentage * (range.end - range.begin)
+    level_actual = (level_actual + range.begin.to_f).round(1)
+
+    if level_index = mic.level_index
+      mixer.fader(mic.level_id, level_actual, level_index)
+    else
+      mixer.fader(mic.level_id, level_actual)
+    end
+  end
+
+  def microphone_mute(name : String, mute : Bool = true)
+    mic = @available_mics.find { |candidate| candidate.name == name }
+    raise "mic '#{name}' not found in system" unless mic
+
+    mixer = system[mic.module_id]
+
+    if mute_index = mic.mute_index
+      mixer.mute(mic.mute_id, mute, mute_index)
+    else
+      mixer.mute(mic.mute_id, mute)
     end
   end
 
@@ -1393,7 +1450,11 @@ class Place::Meet < PlaceOS::Driver
 
       # recall the first lighting preset
       if !@light_scenes.empty? && master
-        select_lighting_scene(@light_scenes.keys.first)
+        begin
+          select_lighting_scene(@light_scenes.keys.first)
+        rescue error
+          logger.warn(exception: error) { "error applying lighting scene" }
+        end
       end
 
       if !mode.linked?

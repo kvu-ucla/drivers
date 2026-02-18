@@ -35,11 +35,11 @@ shards:
 
   bacnet:
     git: https://github.com/spider-gazelle/crystal-bacnet.git
-    version: 1.0.0+git.commit.343835f3e9c8267868bc130edf1124d3774fb119
+    version: 1.0.0+git.commit.fe01d615c5860415d65856e51812c7f9d6acdbd4
 
   bindata:
     git: https://github.com/spider-gazelle/bindata.git
-    version: 2.1.0
+    version: 2.1.1
 
   bisect:
     git: https://github.com/spider-gazelle/bisect.git
@@ -51,7 +51,7 @@ shards:
 
   connect-proxy:
     git: https://github.com/spider-gazelle/connect-proxy.git
-    version: 2.0.2
+    version: 2.0.3
 
   crc16:
     git: https://github.com/maiha/crc16.cr.git
@@ -59,7 +59,7 @@ shards:
 
   crest:
     git: https://github.com/mamantoha/crest.git
-    version: 1.5.1
+    version: 1.6.2
 
   cron_parser:
     git: https://github.com/kostya/cron_parser.git
@@ -83,7 +83,7 @@ shards:
 
   dtls:
     git: https://github.com/spider-gazelle/crystal-dtls.git
-    version: 0.9.1
+    version: 0.9.2
 
   ed25519:
     git: https://github.com/spider-gazelle/ed25519.git
@@ -95,7 +95,7 @@ shards:
 
   eventbus:
     git: https://github.com/spider-gazelle/eventbus.git
-    version: 1.0.0+git.commit.af63536d718348885a553dc4aa6debccc2946289
+    version: 1.0.1+git.commit.a707ac06aba16ba6070ff4972acfd839f1f05e15
 
   exception_page:
     git: https://github.com/crystal-loot/exception_page.git
@@ -139,7 +139,7 @@ shards:
 
   http_proxy:
     git: https://github.com/mamantoha/http_proxy.git
-    version: 0.13.0
+    version: 0.14.0
 
   inactive-support:
     git: https://github.com/spider-gazelle/inactive-support.git
@@ -191,11 +191,11 @@ shards:
 
   office365:
     git: https://github.com/placeos/office365.git
-    version: 1.25.7
+    version: 1.26.0
 
   openssl_ext:
     git: https://github.com/spider-gazelle/openssl_ext.git
-    version: 2.6.3
+    version: 2.8.4
 
   oq:
     git: https://github.com/blacksmoke16/oq.git
@@ -211,7 +211,7 @@ shards:
 
   perf_tools:
     git: https://github.com/crystal-lang/perf-tools.git
-    version: 0.1.0+git.commit.70e016a8f3089fd30d0ad9bd50955c6f5d7bf2c1
+    version: 0.1.0+git.commit.bcbb634307c85ff4a29ab5e2e881c3ffd862fdf0
 
   pg:
     git: https://github.com/will/crystal-pg.git
@@ -219,7 +219,7 @@ shards:
 
   pg-orm:
     git: https://github.com/spider-gazelle/pg-orm.git
-    version: 2.0.5
+    version: 2.1.0
 
   pinger:
     git: https://github.com/spider-gazelle/pinger.git
@@ -227,7 +227,7 @@ shards:
 
   place_calendar:
     git: https://github.com/placeos/calendar.git
-    version: 4.28.0
+    version: 4.29.4
 
   placeos:
     git: https://github.com/placeos/crystal-client.git
@@ -243,7 +243,7 @@ shards:
 
   placeos-driver:
     git: https://github.com/placeos/driver.git
-    version: 7.13.3
+    version: 7.17.7
 
   placeos-log-backend:
     git: https://github.com/place-labs/log-backend.git
@@ -251,11 +251,11 @@ shards:
 
   placeos-models:
     git: https://github.com/placeos/models.git
-    version: 9.76.1
+    version: 9.82.2
 
   pool:
     git: https://github.com/ysbaddaden/pool.git
-    version: 0.2.4
+    version: 0.3.0
 
   priority-queue:
     git: https://github.com/spider-gazelle/priority-queue.git
@@ -283,15 +283,15 @@ shards:
 
   redis:
     git: https://github.com/stefanwille/crystal-redis.git
-    version: 2.9.1
+    version: 2.7.0+git.commit.e81d33945592688c07add1274b811c06d0e4ee26
 
   redis-cluster:
-    git: https://github.com/caspiano/redis-cluster.cr.git
-    version: 0.8.5
+    git: https://github.com/place-labs/redis-cluster.cr.git
+    version: 0.8.10
 
   redis_service_manager:
     git: https://github.com/place-labs/redis_service_manager.git
-    version: 3.2.0
+    version: 3.3.0
 
   rendezvous-hash:
     git: https://github.com/caspiano/rendezvous-hash.git
@@ -359,7 +359,7 @@ shards:
 
   upload-signer:
     git: https://github.com/spider-gazelle/upload-signer.git
-    version: 0.2.0+git.commit.fdf8a1b2886006777efd01d69450c2028e0cf21e
+    version: 0.2.1+git.commit.55191d74c9bb2c7c6813c3abd11fd80ccea0a29d
 
   xml_converter:
     git: https://github.com/mamantoha/xml_converter.git

@@ -7,7 +7,7 @@ class Aver::Cam520Pro < PlaceOS::Driver
   include Interface::Powerable
   include Interface::Camera
 
-  # Discovery Information.
+  # Discovery Information
   generic_name :Camera
   descriptive_name "Aver 520 Pro Camera"
 
@@ -111,13 +111,31 @@ class Aver::Cam520Pro < PlaceOS::Driver
     in Option
       value = payload.value.to_i
       case payload.option
-      in .ptz_ps?
+      in .ptz_p?, .ptz_ps?
         @pan_pos = value
-      in .ptz_ts?
+      in .ptz_t?, .ptz_ts?
         @tilt_pos = value
-      in .ptz_zs?
+      in .ptz_z?, .ptz_zs?
         @zoom_pos = value
         self[:zoom] = value.to_f * (100.0 / @zoom_max.to_f)
+      in .ptz_dzs?
+        # digital zoom?
+      in .ptz_people_count?
+        self[:people_count] = value
+      in .ptz_moving?
+        if value.zero?
+          @zooming = false
+          @panning = nil
+        end
+      end
+    in Signal
+      value = payload.value
+      case payload.option
+      in .login?
+        if value == "kicked"
+          # we need to re-establish the websocket for more messages
+          disconnect
+        end
       end
     in Event
       raise "not possible"
@@ -247,18 +265,21 @@ class Aver::Cam520Pro < PlaceOS::Driver
     zoom_native (percentage * @zoom_max.to_f).to_i
   end
 
+  @zooming_dir : Int32 = 0
+
   def zoom(direction : ZoomDirection, index : Int32 | String = 0)
     @zooming = true
+
     case direction
     in .stop?
-      dir = 0
+      dir = @zooming_dir
       cmd = 2
       @zooming = false
     in .out?
-      dir = 1
+      @zooming_dir = dir = 1
       cmd = 1
     in .in?
-      dir = 0
+      @zooming_dir = dir = 0
       cmd = 1
     end
 
