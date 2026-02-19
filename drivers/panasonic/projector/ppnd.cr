@@ -77,7 +77,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       query_temperatures
       query_av_mute_status
       query_lights
-      # query_freeze_status
+      query_freeze_status
     end
   end
 
