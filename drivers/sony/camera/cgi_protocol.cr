@@ -498,8 +498,6 @@ class Sony::Camera::CGI < PlaceOS::Driver
         self[:autoframe] = (autoframe_status == "on")
       end
     end
-    return nil unless autoframe_status
-    self[:autoframe] = autoframe_status == "on" # device returns "on" or "off"
   end
 
   # ====== Powerable Interface ======
