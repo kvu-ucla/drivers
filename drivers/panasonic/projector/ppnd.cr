@@ -286,7 +286,6 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
     result = Panasonic::Projector::FreezeState.from_json(response.body)
     self[:freeze] = result.state == "on"
-    self[:frozen] = result.state == "on"
 
     result.state == "on"
   end
@@ -300,7 +299,6 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
 
     result = Panasonic::Projector::FreezeState.from_json(response.body)
     self[:freeze] = result.state == "on"
-    self[:frozen] = result.state == "on"
 
     result.state == "on"
   end
