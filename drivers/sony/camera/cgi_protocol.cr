@@ -245,6 +245,8 @@ class Sony::Camera::CGI < PlaceOS::Driver
 
       response
     end
+    autoframing?
+    power?
   end
 
   def info?
@@ -491,9 +493,10 @@ class Sony::Camera::CGI < PlaceOS::Driver
   end
 
   def autoframing?
-    autoframe_status : String? = nil
     query("/command/inquiry.cgi?inq=ptzautoframing", priority: 0) do |response|
-      autoframe_status = response["PtzAutoFraming"]?
+      if autoframe_status = response["PtzAutoFraming"]?
+        self[:autoframe] = (autoframe_status == "on")
+      end
     end
     return nil unless autoframe_status
     self[:autoframe] = autoframe_status == "on" # device returns "on" or "off"
@@ -508,11 +511,10 @@ class Sony::Camera::CGI < PlaceOS::Driver
   end
 
   def power?
-    power_status : String? = nil
     query("/command/inquiry.cgi?inq=sysinfo", priority: 0) do |response|
-      power_status = response["Power"]?
+      if power_status = response["Power"]?
+        self[:power] = (power_status == "on") # This executes
+      end
     end
-    return nil unless power_status
-    self[:power] = power_status == "on" # device returns "on" or "standby"
   end
 end
