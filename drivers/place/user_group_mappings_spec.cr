@@ -3,7 +3,7 @@ require "placeos-driver/spec"
 # :nodoc:
 class StaffAPIMock < DriverSpecs::MockDriver
   def user(id : String)
-    {id: "user-1234", email: "steve@placeos.tech", authority_id: "authority-12345"}
+    {id: "user-1234", email: "steve@placeos.tech", authority_id: "authority-12345", groups: ["existing_group_to_be_ignored"]}
   end
 
   def update_user(id : String, body_json : String) : Nil
@@ -40,6 +40,21 @@ DriverSpecs.mock_driver "Place::LogicExample" do
       "5f4694-96f3-4209-a432-b04ac06ca7" => {"place_id" => "intune"},
       "admins"                           => {"place_id" => "im an admin"},
     },
+    ignore_placeos_groups: ["existing_group_to_be_ignored"],
+    authority_id: "authority-12345",
+  })
+
+  exec(:check_user, "user-1234").get
+  system(:StaffAPI_1)["user-1234"].should eq({"groups" => ["existing_group_to_be_ignored", "intune"]}.to_json)
+
+
+  settings({
+    group_mappings: {
+      "5f4694-96f3-4209-a432-b04ac06ca7" => {"place_id" => "intune"},
+      "admins"                           => {"place_id" => "im an admin"},
+    },
+    ignore_placeos_groups: [] of String,
+    authority_id: "authority-12345",
   })
 
   exec(:check_user, "user-1234").get
