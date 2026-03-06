@@ -7,7 +7,7 @@ require "simple_retry"
 require "place_calendar"
 require "./booking_model"
 
-# This comment is to force a recompile of the driver with updated models
+# This comment is to force a recompile of the driver with updated models.
 
 class Place::StaffAPI < PlaceOS::Driver
   descriptive_name "PlaceOS Staff API"
@@ -404,6 +404,66 @@ class Place::StaffAPI < PlaceOS::Driver
     response = delete("/api/engine/v2/uploads/#{upload_id}", headers: authentication)
     raise "upload removal failed #{response.status_code}\n#{response.body}" unless response.success?
     true
+  end
+
+  # ===================================
+  # Signage
+  # ===================================
+
+  # where display id is the signage system id
+  # returns nil if not modified
+  def signage_content(display_id : String, modified_since : Int64? = nil)
+    auth = authentication
+    if modified_since
+      auth["If-Modified-Since"] = HTTP.format_time(Time.unix(modified_since))
+    end
+    response = get("/api/engine/v2/signage/#{display_id}", headers: auth)
+    return nil if response.status.not_modified?
+    raise "fetching signage content failed #{response.status_code}\n#{response.body}" unless response.success?
+    # ::PlaceOS::Model::ControlSystem.from_json(response.body)
+    response.body
+  end
+
+  alias PlaylistMedia = Hash(String, Tuple(::PlaceOS::Model::Playlist, Array(String)))
+
+  def signage_playlist(display_id : String, modified_since : Int64? = nil, timezone : String? = nil) : Array(::PlaceOS::Model::Playlist::Item)?
+    content = signage_content(display_id, modified_since)
+    return nil unless content
+    media = Array(::PlaceOS::Model::Playlist::Item).from_json(content, root: "playlist_media")
+    playlists = PlaylistMedia.from_json(content, root: "playlist_config").values
+
+    valid_media = [] of String
+
+    timezone = Time::Location.load(timezone) if timezone
+    now = timezone ? Time.local(timezone) : Time.utc
+    playlists.select! do |(playlist, media_ids)|
+      next false unless playlist.should_present?(now)
+      valid_media.concat media_ids
+      true
+    end
+
+    # grab the media that is valid
+    media = valid_media.compact_map { |id| media.find { |item| item.id == id } }
+
+    # reject any media that is not valid
+    now_unix = now.to_unix
+    media.reject! do |item|
+      starting = item.valid_from
+      ending = item.valid_until
+
+      next false if starting && starting > now_unix
+      next false if ending && ending <= now_unix
+      true
+    end
+
+    # return the remaining media list
+    media
+  end
+
+  def signage_download_url(upload_id : String)
+    uri = URI.parse(config.uri.as(String))
+    uri.path = "/api/engine/v2/uploads/#{upload_id}/download/#{@api_key}/false/image.jpg"
+    uri
   end
 
   # ===================================
