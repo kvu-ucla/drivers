@@ -401,13 +401,38 @@ class Sony::Camera::CGI < PlaceOS::Driver
 
     tilt_speed = -tilt_speed if @invert_controls && tilt_speed != 0
 
-    action("/command/ptzf.cgi?ContinuousPanTiltZoom=#{pan_speed.to_s(16)},#{tilt_speed.to_s(16)},0,image#{index}",
-      name: "moving",
-      priority: queue.priority + 50,
-    ) do
-      self[:moving] = @moving = (pan_speed != 0 || tilt_speed != 0)
-      query_status if !@moving
-      @moving
+    if pan_speed == 0 && tilt_speed == 0
+      stop
+    else
+      dir = joystick_direction(pan_speed, tilt_speed)
+
+      pan_api  = (pan_speed.abs  / 100.0 * 24).ceil.to_i
+      tilt_api = (tilt_speed.abs / 100.0 * 23).ceil.to_i
+
+      action("/command/ptzf.cgi?PanTiltMove=#{dir.to_api},#{pan_api},#{tilt_api},image#{index}",
+        name: "moving",
+        priority: queue.priority + 50,
+      ) { self[:moving] = @moving = true }
+    end
+  end
+
+  private def joystick_direction(pan : Int32, tilt : Int32) : MovementDirection
+    if pan < 0 && tilt > 0
+      MovementDirection::UpLeft
+    elsif pan > 0 && tilt > 0
+      MovementDirection::UpRight
+    elsif pan < 0 && tilt < 0
+      MovementDirection::DownLeft
+    elsif pan > 0 && tilt < 0
+      MovementDirection::DownRight
+    elsif pan < 0
+      MovementDirection::Left
+    elsif pan > 0
+      MovementDirection::Right
+    elsif tilt > 0
+      MovementDirection::Up
+    else
+      MovementDirection::Down
     end
   end
 
