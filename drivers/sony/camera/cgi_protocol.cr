@@ -408,7 +408,7 @@ class Sony::Camera::CGI < PlaceOS::Driver
       pan_api  = (pan_speed.abs  / 100.0 * 24).ceil.to_i
       tilt_api = (tilt_speed.abs / 100.0 * 23).ceil.to_i
 
-      action("/command/ptzf.cgi?PanTiltMove=#{dir.to_api},#{pan_api},#{tilt_api},image#{index}",
+      action("/command/ptzf.cgi?PanTiltMove=#{dir.to_api},#{pan_api},#{tilt_api}",
         name: "moving",
         priority: queue.priority + 50,
       ) { self[:moving] = @moving = true }
