@@ -395,9 +395,8 @@ class Sony::Camera::CGI < PlaceOS::Driver
     pan_speed = pan_speed.to_i
     tilt_speed = tilt_speed.to_i
 
-    range = -100..100
-    in_range range, pan_speed
-    in_range range, tilt_speed
+    pan_speed = pan_speed.clamp(-100, 100)
+    tilt_speed = tilt_speed.clamp(-100, 100)
 
     tilt_speed = -tilt_speed if @invert_controls && tilt_speed != 0
 
