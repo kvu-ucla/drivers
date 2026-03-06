@@ -401,7 +401,10 @@ class Sony::Camera::CGI < PlaceOS::Driver
     tilt_speed = -tilt_speed if @invert_controls && tilt_speed != 0
 
     if pan_speed == 0 && tilt_speed == 0
-      stop
+      action("/command/ptzf.cgi?Move=stop,motor,image#{index}",
+        priority: 999,
+        name: "moving",
+      ) { self[:moving] = @moving = false }
     else
       dir = joystick_direction(pan_speed, tilt_speed)
 
