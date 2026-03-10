@@ -152,6 +152,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     updated_bookings = self[:Bookings]
     determine_current_booking(updated_bookings.as_a)
     determine_next_booking(updated_bookings.as_a)
+    determine_active_booking(updated_bookings.as_a) if self["InfoResult"]?
   end
 
   # determine current booking, i.e. booking that is closest to current time
