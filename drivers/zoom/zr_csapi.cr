@@ -196,13 +196,16 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
 
     # Get the current meeting id during active call
     active_meeting_id = self["InfoResult"]["meeting_id"]?
-    active_meeting_password = self["InfoResult"]["meeting_passsword"]?
+    active_meeting_password = self["InfoResult"]["meeting_password"]?
 
     if active_meeting_id
       # Find the booking that matches the active meeting
       active_booking = bookings.find do |booking|
         booking["meetingNumber"] == active_meeting_id
-        booking["meetingPassword"] == active_meeting_password
+      end
+
+      if active_booking && active_meeting_password
+        active_booking = JSON::Any.new(active_booking.as_h.merge({"meetingPassword" => active_meeting_password}))
       end
 
       self[:active_booking] = active_booking
