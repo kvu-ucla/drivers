@@ -836,8 +836,8 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
       if bookings = self[:Bookings]?
         determine_active_booking(bookings.as_a)
       end
-    when "RecordConsent"
-      is_show = json_response["RecordConsent"]["isShow"]?
+    when "RecordingConsent"
+      is_show = json_response["RecordingConsent"]["isShow"]?
       do_send("zCommand Agree Recording: on") if is_show
     end
 
