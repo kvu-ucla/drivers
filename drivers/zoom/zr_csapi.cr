@@ -49,20 +49,9 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     end
   end
 
-  def test_determine_functions
-    logger.debug { "Manual test" }
-    @current_time = Time.utc.to_unix
-    if list = self[:Bookings]?
-      determine_current_booking(list.as_a)
-      determine_next_booking(list.as_a)
-    end
-  end
 
   def connected
     reset_connection_flags
-    # schedule.in(5.seconds) do
-    #   initialize_tokenizer unless @ready || @init_called
-    # end
     # we need to disconnect if we don't see welcome message
     @connection_timeout_schedule = schedule.in(9.seconds) do
       if !ready?
@@ -396,6 +385,13 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     do_send("zCommand Call ShareCamera id: #{camera_id} Status: #{state}", name: "sharing_camera")
   end
 
+  # Poll Sharing
+  def sharing_poll
+    do_send("zStatus Sharing", name: "sharing_poll")
+    sleep @response_delay.milliseconds
+    self["Sharing"]
+  end
+
   # =================
   # zCommand Methods - Device Testing
   # =================
@@ -504,7 +500,12 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     return unless call = self[:Call]
 
     call_state = call.dig?("Status")
-    self[:in_call] = call_state.as_s? == "IN_MEETING" if call_state
+    if call_state
+      in_call = call_state.as_s? == "IN_MEETING"
+      self[:active_booking] = nil unless in_call
+      self[:in_call] = in_call
+      sharing_poll
+    end
 
     mic_state = call.dig?("Microphone", "Mute")
     self[:mic_mute] = mic_state.as_bool? if mic_state
