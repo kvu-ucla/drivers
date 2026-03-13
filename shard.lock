@@ -11,7 +11,7 @@ shards:
 
   active-model:
     git: https://github.com/spider-gazelle/active-model.git
-    version: 4.3.2
+    version: 4.3.3
 
   awscr-s3:
     git: https://github.com/taylorfinnell/awscr-s3.git
@@ -195,7 +195,7 @@ shards:
 
   openssl_ext:
     git: https://github.com/spider-gazelle/openssl_ext.git
-    version: 2.8.4
+    version: 2.8.5
 
   oq:
     git: https://github.com/blacksmoke16/oq.git
@@ -211,7 +211,7 @@ shards:
 
   perf_tools:
     git: https://github.com/crystal-lang/perf-tools.git
-    version: 0.1.0+git.commit.bcbb634307c85ff4a29ab5e2e881c3ffd862fdf0
+    version: 0.1.0+git.commit.e7c2ab8c94019e5ff58e5d9ad987109bc5532c16
 
   pg:
     git: https://github.com/will/crystal-pg.git
@@ -251,7 +251,7 @@ shards:
 
   placeos-models:
     git: https://github.com/placeos/models.git
-    version: 9.83.1
+    version: 9.84.1
 
   pool:
     git: https://github.com/ysbaddaden/pool.git

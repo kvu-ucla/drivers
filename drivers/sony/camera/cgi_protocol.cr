@@ -462,7 +462,7 @@ class Sony::Camera::CGI < PlaceOS::Driver
         name: "zooming"
       ) { self[:zooming] = @zooming = false }
     else
-      action("/command/ptzf.cgi?Move=#{direction.out? ? "wide" : "near"},0,image#{index}",
+      action("/command/ptzf.cgi?Move=#{direction.out? ? "wide" : "tele"},0,image#{index}",
         name: "zooming",
         priority: queue.priority + 40,
       ) { self[:zooming] = @zooming = true }
