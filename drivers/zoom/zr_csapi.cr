@@ -7,7 +7,7 @@ require "placeos-driver"
 class Zoom::ZrCSAPI < PlaceOS::Driver
   descriptive_name "Zoom Room ZR-CSAPI"
   generic_name :ZoomCSAPI
-  description "Legacy SSH-based API for Zoom Rooms. Requires SSH credentials configured on the Zoom Room."
+  description "Legacy SSH-based API for Zoom Rooms. Requires SSH credentials configured on the Zoom Room"
 
   tcp_port 2244
 
