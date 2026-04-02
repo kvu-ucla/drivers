@@ -289,16 +289,16 @@ class Place::AreaManagement < PlaceOS::Driver
   protected def update_level_details(level_details, zone, metadata)
     return unless zone.tags.includes?("level")
 
-    if desks = metadata["desks"]?
+    desks_meta = metadata["desks"]?
+    if desks_meta && (desk_array = desks_meta.details.as_a?)
       desk_map = {} of String => String
 
       if @desk_id_mappings.empty?
-        ids = desks.details.as_a.map { |desk| desk["id"].as_s }
+        ids = desk_array.map { |desk| desk["id"].as_s }
       else
-        desk_details = desks.details.as_a
-        ids = Array(String).new(desk_details.size)
+        ids = Array(String).new(desk_array.size)
 
-        desk_details.each do |desk|
+        desk_array.each do |desk|
           desk_id = desk["id"].as_s
           ids << desk_id
           @desk_id_mappings.each do |mapping|
@@ -309,7 +309,7 @@ class Place::AreaManagement < PlaceOS::Driver
         end
       end
 
-      ids = desks.details.as_a.map { |desk| desk["id"].as_s }
+      ids = desk_array.map { |desk| desk["id"].as_s }
       level_details[zone.id] = {
         total_desks:    ids.size,
         total_capacity: zone.capacity,
@@ -317,6 +317,9 @@ class Place::AreaManagement < PlaceOS::Driver
         desk_mappings:  desk_map,
       }
     else
+      if desks_meta
+        logger.warn { "desks metadata for zone #{zone.id} has unexpected format: expected Array, got #{desks_meta.details.raw.class}" }
+      end
       level_details[zone.id] = {
         total_desks:    zone.count,
         total_capacity: zone.capacity,
@@ -469,6 +472,28 @@ class Place::AreaManagement < PlaceOS::Driver
       sensors:          sensor_summary,
       desk_checked_in:  desk_checked_in,
     }
+
+    # Group upcoming desk bookings by desk ID for frontend tooltip support
+    desk_bookings_map = Hash(String, Array(Hash(String, JSON::Any))).new { |h, k| h[k] = [] of Hash(String, JSON::Any) }
+    upcoming = location_service.upcoming_bookings(level_id).get.as_a
+    upcoming.each do |loc|
+      next unless loc["location"]?.try(&.as_s) == "booking" && loc["type"]?.try(&.as_s) == "desk"
+      desk_id = loc["map_id"]?.try(&.as_s) || loc["asset_id"]?.try(&.as_s)
+      next unless desk_id
+
+      entry = {} of String => JSON::Any
+      {"booking_id", "started_at", "ends_at", "duration", "staff_name", "staff_email", "checked_in"}.each do |key|
+        if val = loc[key]?
+          entry[key] = val
+        end
+      end
+      desk_bookings_map[desk_id] << entry
+    end
+
+    # Sort bookings per desk by start time
+    desk_bookings_map.each_value(&.sort_by! { |b| b["started_at"]?.try(&.as_i64) || 0_i64 })
+
+    self["#{level_id}:desk_bookings"] = desk_bookings_map
 
     # we need to know the map dimensions to be able to count people in areas
     map_width = 100.0

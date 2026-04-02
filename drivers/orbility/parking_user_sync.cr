@@ -40,6 +40,7 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
   accessor gallagher : Gallagher_1
   accessor directory : Calendar_1
   accessor staff_api : StaffAPI_1
+  accessor location_services : LocationServices_1
   accessor orbility : Orbility_1
 
   @time_zone : Time::Location = Time::Location.load("GMT")
@@ -108,6 +109,22 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     end
 
     spawn { perform_user_sync } if @sync_requests > 0
+  end
+
+  def cleanup_subscriptions
+    removed = 0
+    subscriptions = Array(Subscription).from_json(orbility.subscriptions(orbility_contract_id).get.to_json)
+    subscriptions.each do |sub|
+      if sub.card_ids.empty?
+        begin
+          orbility.delete_subscription(sub.id).get
+          removed += 1
+        rescue error
+          logger.warn(exception: error) { "failed to remove sub #{sub.id}" }
+        end
+      end
+    end
+    removed
   end
 
   @warnings : Array(String) = [] of String
@@ -198,50 +215,51 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     logger.debug { "Number of existing users in parking system: #{cards.size}" }
 
     dir_count = 0
-    dir_users = [] of String
+    dir_users = Set(String).new
     new_users = [] of DirUser
     update_users = [] of Tuple(DirUser, Card)
 
     # get the list of users in the active directory (page by page)
-    users = Array(DirUser).from_json directory.get_members(user_group_id, additional_fields: {car_license_ext}).get.to_json
+    users = Array(DirUser).from_json(directory.get_members(user_group_id, additional_fields: {car_license_ext}).get.to_json) + assigned_spaces
     loop do
       # keep track of users that need to be created
       users.each do |user|
-        unless user.suspended
-          email = user.email.strip.downcase
-          user.email = email
-          username = user.username.strip.downcase
-          user.username = username
+        next if user.suspended
+        next if dir_users.includes?(user.id) # as we mixed in the assigned spots
 
-          # use the phone field to store the card number
-          swipe_card_number = lookup_security_card(username, email)
-          user.phone = swipe_card_number
+        email = user.email.strip.downcase
+        user.email = email
+        username = user.username.strip.downcase
+        user.username = username
 
-          # check if the user is already in the parking system
-          if swipe_card_number
-            dir_users << swipe_card_number
-            parking_card = cards[user.id]? || cards[swipe_card_number]? || cards[username]?
+        # use the phone field to store the card number
+        swipe_card_number = lookup_security_card(username, email)
+        user.phone = swipe_card_number
+
+        # check if the user is already in the parking system
+        if swipe_card_number
+          dir_users << swipe_card_number
+          parking_card = cards[user.id]? || cards[swipe_card_number]? || cards[username]?
+        else
+          parking_card = cards[user.id]? || cards[username]?
+        end
+
+        # store the checked emails and users that we need to add to the parking system
+        dir_count += 1
+        dir_users << user.id
+        dir_users << username
+        if parking_card
+          if parking_card.access_card_no != swipe_card_number || !parking_card.first_use_type.entry_or_exit?
+            update_users << {user, parking_card}
           else
-            parking_card = cards[user.id]? || cards[username]?
-          end
-
-          # store the checked emails and users that we need to add to the parking system
-          dir_count += 1
-          dir_users << user.id
-          dir_users << username
-          if parking_card
-            if parking_card.access_card_no != swipe_card_number
+            parking_licences = Set.new(parking_card.licence_plates)
+            storage_licenses = Set.new(user_plates(user))
+            if parking_licences != storage_licenses
               update_users << {user, parking_card}
-            else
-              parking_licences = Set.new(parking_card.licence_plates)
-              storage_licenses = Set.new(user_plates(user))
-              if parking_licences != storage_licenses
-                update_users << {user, parking_card}
-              end
             end
-          else
-            new_users << user
           end
+        else
+          new_users << user
         end
       end
 
@@ -261,7 +279,8 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     removed = 0
     removed_errors = 0
 
-    remove_users = cards.keys - dir_users
+    # exclude fleet_vehicles from this removal
+    remove_users = Set.new(cards.keys.reject(&.starts_with?("fleet_vehicle-"))) - dir_users
     remove_users.each do |parking_card_id|
       card = cards[parking_card_id]
       begin
@@ -336,6 +355,8 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
       end
     end
 
+    fleet_added, fleet_removed, fleet_errors = sync_fleet_vehicles(cards)
+
     result = {
       removed:        removed,
       removed_errors: removed_errors,
@@ -343,12 +364,15 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
       added_errors:   added_errors,
       updated:        updated,
       update_errors:  update_errors,
+      fleet_added:    fleet_added,
+      fleet_removed:  fleet_removed,
+      fleet_errors:   fleet_errors,
       warnings:       @warnings,
     }
     @last_result = result
     self[:last_result] = result
     @warnings = [] of String
-    logger.info { "integriti user sync results: #{result}" }
+    logger.info { "parking user sync results: #{result}" }
     result
   end
 
@@ -359,8 +383,128 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     added_errors: Int32,
     updated: Int32,
     update_errors: Int32,
+    fleet_added: Int32,
+    fleet_removed: Int32,
+    fleet_errors: Int32,
     warnings: Array(String),
   )? = nil
+
+  # ===================
+  # FLEET VEHICLES
+  # ===================
+
+  FLEET_VEHICLES = "_PARKING_FLEET_VEHICLES_"
+
+  protected getter building_id : String { location_services.building_id.get.as_s }
+
+  protected getter fleet_vehicle_asset_type : String do
+    cat = staff_api.asset_categories(hidden: true).get.as_a.find! { |cat| cat["name"].as_s == FLEET_VEHICLES }
+    type = staff_api.asset_types(category_id: cat["id"].as_s).get.as_a.find! { |cat| cat["name"].as_s == FLEET_VEHICLES }
+    type["id"].as_s
+  end
+
+  record Vehicle, vehicle_name : String, license_plate : String do
+    include JSON::Serializable
+  end
+
+  def fleet_vehicles : Array(Vehicle)
+    vehicles = staff_api.assets(type_id: fleet_vehicle_asset_type, zone_id: building_id).get.as_a
+    vehicles.map do |json|
+      vehicle_name = json["identifier"].as_s
+      license_plate = json["other_data"]["plate_number"].as_s
+      Vehicle.new(vehicle_name, license_plate)
+    end
+  end
+
+  protected def sync_fleet_vehicles(cards : Hash(String, Card)) : Tuple(Int32, Int32, Int32)
+    existing_keys = cards.keys.select(&.starts_with?("fleet_vehicle-"))
+    vehicles = fleet_vehicles
+
+    lookup = {} of String => Vehicle
+    vehicles.each do |vehicle|
+      lookup["fleet_vehicle-#{vehicle.license_plate}"] = vehicle
+    end
+    vehicle_keys = lookup.keys
+
+    add = vehicle_keys - existing_keys
+    remove = existing_keys - vehicle_keys
+    errors = 0
+
+    start_date = 1.week.ago
+    end_date = 30.years.from_now
+
+    add.each do |key|
+      vehicle = lookup[key]
+      begin
+        # create a subscription
+        sub = Subscription.new(orbility_product_id, orbility_contract_id, orbility_offer_id, start_date, end_date)
+        json = (orbility.add_subscription(sub).get rescue nil)
+
+        if json && json.raw
+          sub_id = Int64?.from_json(json.to_json)
+        end
+
+        if sub_id.nil?
+          errors += 1
+          logger.warn { "failed to create subscription for #{vehicle.vehicle_name} (#{vehicle.license_plate})" }
+          next
+        end
+
+        # create a card
+        person = Person.new("Fleet-Vehicle", vehicle.vehicle_name, "fleet_vehicle-#{vehicle.license_plate}", [] of String)
+        card = CardUpdate.new(sub_id, nil, [vehicle.license_plate], person)
+        orbility.add_card(card).get
+      rescue error
+        errors += 1
+        logger.warn(exception: error) { "failed to create card for #{vehicle.vehicle_name} (#{vehicle.license_plate})" }
+      end
+    end
+
+    remove.each do |key|
+      card = cards[key]
+      begin
+        orbility.delete_card(card.id).get
+        orbility.delete_subscription(card.subscription_id).get
+      rescue error
+        errors += 1
+        logger.warn(exception: error) { "failed to remove card #{card.id}: #{card.person.first_name} #{card.person.name}" }
+      end
+    end
+
+    {add.size, remove.size, errors}
+  end
+
+  # ===================
+  # ASSIGNED SPOTS
+  # ===================
+
+  ASSIGNED_SPOTS = "_PARKING_SPACES_"
+
+  protected getter space_assignment_asset_type : String do
+    cat = staff_api.asset_categories(hidden: true).get.as_a.find { |cat| cat["name"].as_s == ASSIGNED_SPOTS }
+    type = staff_api.asset_types(category_id: cat["id"].as_s).get.as_a.find! { |cat| cat["name"].as_s == ASSIGNED_SPOTS }
+    type["id"].as_s
+  end
+
+  record Assigned, parking_bay : String, assigned_to : String
+
+  def assigned_spaces : Array(DirUser)
+    # TODO:: update the staff api so we can filter from the list of zones, not just zone_id
+    staff_api.assets(type_id: space_assignment_asset_type).get.as_a.compact_map { |json|
+      assigned_to = json["assigned_to"]?.try(&.as_s?).presence
+      if assigned_to
+        parking_bay = json["identifier"].as_s
+        Assigned.new(parking_bay, assigned_to)
+      end
+    }.compact_map { |assignment|
+      user_json = directory.get_user(assignment.assigned_to, additional_fields: {car_license_ext}).get.to_json rescue nil
+      if user_json
+        user = DirUser.from_json(user_json)
+        user.name = "#{user.name} (#{assignment.parking_bay})"
+        user
+      end
+    }
+  end
 
   # ===================
   # Group subscriptions
