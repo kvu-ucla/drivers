@@ -77,8 +77,10 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       query_temperatures
       query_av_mute_status
       query_lights
-      query_freeze_status
       query_errors
+
+      # freeze not supported
+      # query_freeze_status
     end
   end
 
@@ -369,7 +371,9 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       raise "Error query failed: #{response.status_code}"
     end
 
-    errors = Array(Panasonic::Projector::ErrorStatus).from_json(response.body, root: "errors")
+    errors = Array(Panasonic::Projector::ErrorStatus).from_json(response.body, root: "error").reject do |error|
+      error.error_kind == "no error"
+    end
     self[:errors] = errors
     self[:error_count] = errors.size
     self[:has_errors] = !errors.empty?
