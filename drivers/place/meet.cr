@@ -82,6 +82,7 @@ class Place::Meet < PlaceOS::Driver
   DEFAULT_DSP_MOD = "Mixer_1"
   @mixer_module : String = DEFAULT_DSP_MOD
   @fls_active : Bool = false
+  @ignore_fls_signal : Bool = false
 
   # core includes: 'current_routes' hash
   # but we override it here for LLM integration
@@ -104,6 +105,8 @@ class Place::Meet < PlaceOS::Driver
     @unjoin_on_shutdown = setting?(Bool, :unjoin_on_shutdown)
     @mute_on_unlink = setting?(Bool, :mute_on_unlink) || false
     @auto_route_on_join = setting?(Bool, :auto_route_on_join) || false
+
+    @ignore_fls_signal = setting?(Bool, :ignore_fls_signal) || false
 
     @join_lock.synchronize do
       subscriptions.clear
@@ -165,6 +168,12 @@ class Place::Meet < PlaceOS::Driver
   # Sets the overall room power state.
   def power(state : Bool, unlink : Bool = false)
     return if state == status?(Bool, :active)
+
+    if state && @fls_active && !@ignore_fls_signal
+      logger.warn { "Ingoring power on request as fire alarm active" }
+      return
+    end
+
     logger.debug { "Powering #{state ? "up" : "down"}" }
     self[:active] = state
     unlink = @unjoin_on_shutdown.nil? ? unlink : !!@unjoin_on_shutdown
@@ -1561,16 +1570,20 @@ class Place::Meet < PlaceOS::Driver
 
       if new_state
         logger.debug { "FLS Active, shutting system shutdown" }
-        set_power_state(false)
+        set_power_state(false) unless @ignore_fls_signal
       else
         logger.debug { "FLS Cleared" }
       end
+
+      self[:fls_active] = @fls_active
+      self[:fls_ignored] = @ignore_fls_signal
     end
+
     # Subscribe to local active state - prevent system from turning on during FLS
     subscribe(:active) do |_sub, active_state|
       if @fls_active && JSON.parse(active_state).as_bool?
         logger.debug { "System attempted to turn on during FLS - forcing off" }
-        set_power_state(false)
+        set_power_state(false) unless @ignore_fls_signal
       end
     end
   end
