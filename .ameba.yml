@@ -5,6 +5,10 @@ Lint/DebugCalls:
   Excluded:
   - drivers/**/*_spec.cr
 
+Lint/NotNil:
+  Excluded:
+  - drivers/**/*_spec.cr
+
 # NOTE: These should all be reviewed on an individual basis to see if their
 #       complexity can be reasonably reduced.
 Metrics/CyclomaticComplexity:
@@ -59,3 +63,8 @@ Lint/ShadowingOuterLocalVar:
   - drivers/cisco/switch/snooping_catalyst.cr
   Enabled: true
   Severity: Warning
+
+Naming/AccessorMethodName:
+  Description: Disallows getter method names prefixed with `get_` or setter method names prefixed with `set_`
+  Enabled: false
+  Severity: Convention

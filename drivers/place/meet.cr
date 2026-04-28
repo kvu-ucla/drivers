@@ -84,6 +84,9 @@ class Place::Meet < PlaceOS::Driver
   @fls_active : Bool = false
   @ignore_fls_signal : Bool = false
 
+  @startup_exec : Array(AccessoryComplex::Exec)? = nil
+  @shutown_exec : Array(AccessoryComplex::Exec)? = nil
+
   # core includes: 'current_routes' hash
   # but we override it here for LLM integration
   @[Description("obtain the current routes, output => input")]
@@ -107,6 +110,8 @@ class Place::Meet < PlaceOS::Driver
     @auto_route_on_join = setting?(Bool, :auto_route_on_join) || false
 
     @ignore_fls_signal = setting?(Bool, :ignore_fls_signal) || false
+    @startup_exec = setting?(Array(AccessoryComplex::Exec), :startup_exec)
+    @shutown_exec = setting?(Array(AccessoryComplex::Exec), :shutown_exec)
 
     @join_lock.synchronize do
       subscriptions.clear
@@ -194,6 +199,8 @@ class Place::Meet < PlaceOS::Driver
       if first_output = @tabs.first?.try &.inputs.first
         selected_input first_output
       end
+
+      perform_executes(@startup_exec)
     else
       unlink_systems if unlink
       audio_mute(true) rescue nil
@@ -212,6 +219,8 @@ class Place::Meet < PlaceOS::Driver
         sys.implementing(Interface::Powerable).power false
       end
       sys[@local_vidconf].hangup if sys.exists?(@local_vidconf)
+
+      perform_executes(@shutown_exec)
     end
 
     remotes_before.each { |room| room.power(state, unlink) }
@@ -226,6 +235,23 @@ class Place::Meet < PlaceOS::Driver
     {% end %}
 
     state
+  end
+
+  protected def perform_executes(execs : Array(AccessoryComplex::Exec)?) : Nil
+    return unless execs
+
+    execs.each do |action|
+      begin
+        # check if explicitly indexed, otherwise send to all
+        if action.module =~ /_\d+$/
+          system[action.module].__send__(action.function_name, action.arguments)
+        else
+          system.all(action.module).__send__(action.function_name, action.arguments)
+        end
+      rescue error
+        Log.warn(exception: error) { "failed to execute action #{action.module}.#{action.function_name}(#{action.arguments})" }
+      end
+    end
   end
 
   @[Description("query the system power state?")]
@@ -1212,6 +1238,7 @@ class Place::Meet < PlaceOS::Driver
 
   # run on system power on
   def apply_camera_defaults
+    self[:selected_camera] = nil
     system.all(vc_camera_module).power true
   end
 

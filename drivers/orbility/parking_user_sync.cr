@@ -30,6 +30,8 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     # staff offer 3
     orbility_offer_id: 3,
 
+    sync_fleet_vehicles: false,
+
     # use these for enabling push notifications
     _push_authority:        "authority-GAdySsf05mL",
     _push_notification_url: "https://placeos-dev.aca.im/api/engine/v2/notifications/office365",
@@ -48,6 +50,7 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
   @syncing : Bool = false
   @sync_mutex : Mutex = Mutex.new
   @sync_requests : Int32 = 0
+  @sync_fleet_vehicles : Bool = false
 
   def on_update
     @time_zone_string = setting?(String, :time_zone).presence || config.control_system.not_nil!.timezone.presence || "GMT"
@@ -60,6 +63,7 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     @orbility_product_id = setting(Int64, :orbility_product_id)
     @orbility_contract_id = setting(Int64, :orbility_contract_id)
     @orbility_offer_id = setting(Int64, :orbility_offer_id)
+    @sync_fleet_vehicles = setting?(Bool, :sync_fleet_vehicles) || false
 
     @graph_group_id = nil
 
@@ -130,7 +134,8 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
   @warnings : Array(String) = [] of String
 
   # Get existing parking card details
-  protected def get_card_details : Hash(String, Card)
+  @[Security(Level::Support)]
+  def get_card_details : Hash(String, Card)
     subscriptions = Array(Subscription).from_json(orbility.subscriptions(orbility_contract_id).get.to_json)
     cards = subscriptions.compact_map do |sub|
       if card_id = sub.card_ids.first?
@@ -157,7 +162,7 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
 
   PLATES_DEFAULT = [] of String
 
-  # extract users number plates from Azure
+  # extract users number plates from Azure:
   protected def user_plates(user) : Array(String)
     license_plates = PLATES_DEFAULT
     if unmapped = user.unmapped
@@ -220,7 +225,11 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     update_users = [] of Tuple(DirUser, Card)
 
     # get the list of users in the active directory (page by page)
-    users = Array(DirUser).from_json(directory.get_members(user_group_id, additional_fields: {car_license_ext}).get.to_json) + assigned_spaces
+    users = Array(DirUser).from_json(directory.get_members(user_group_id, additional_fields: {car_license_ext}).get.to_json)
+    
+    # we'll include assigned spaces in the first batch if syncing fleet vehicles
+    users.concat(assigned_spaces) if @sync_fleet_vehicles
+
     loop do
       # keep track of users that need to be created
       users.each do |user|
@@ -249,7 +258,7 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
         dir_users << user.id
         dir_users << username
         if parking_card
-          if parking_card.access_card_no != swipe_card_number || !parking_card.first_use_type.entry_or_exit?
+          if parking_card.access_card_no != swipe_card_number || !parking_card.first_use_type.entry_or_exit? || !parking_card.first_use_type_id.entry_or_exit?
             update_users << {user, parking_card}
           else
             parking_licences = Set.new(parking_card.licence_plates)
@@ -323,10 +332,16 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
           next
         end
 
-        # create a card
-        person = Person.new(first_name, last_name, user.id, [username, user_email].uniq!)
-        card = CardUpdate.new(sub_id, swipe_card_number, user_plates(user), person)
-        orbility.add_card(card).get
+        # cleanup subscription on failure
+        begin
+          # create a card
+          person = Person.new(first_name[0...20], last_name[0...20], user.id, [username, user_email].uniq!)
+          card = CardUpdate.new(sub_id, swipe_card_number, user_plates(user), person)
+          orbility.add_card(card).get
+        rescue error
+          orbility.delete_subscription(sub_id) rescue nil
+          raise error
+        end
 
         added += 1
       rescue error
@@ -355,7 +370,13 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
       end
     end
 
-    fleet_added, fleet_removed, fleet_errors = sync_fleet_vehicles(cards)
+    if @sync_fleet_vehicles
+      fleet_added, fleet_removed, fleet_errors = sync_fleet_vehicles(cards)
+    else
+      fleet_added = 0
+      fleet_removed = 0
+      fleet_errors = 0
+    end
 
     result = {
       removed:        removed,
@@ -389,16 +410,27 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
     warnings: Array(String),
   )? = nil
 
+  def cleanup_empty_subscriptions
+    subscriptions = Array(Subscription).from_json(orbility.subscriptions(orbility_contract_id).get.to_json)
+    subscriptions.each do |sub|
+      if sub.card_ids.empty?
+        logger.debug { "Removing empty subscription #{sub.id}" }
+        orbility.delete_subscription(sub.id).get rescue nil
+      end
+    end
+  end
+
   # ===================
   # FLEET VEHICLES
   # ===================
 
+  CATEGORY_PARKING = "_PARKING_"
   FLEET_VEHICLES = "_PARKING_FLEET_VEHICLES_"
 
   protected getter building_id : String { location_services.building_id.get.as_s }
 
   protected getter fleet_vehicle_asset_type : String do
-    cat = staff_api.asset_categories(hidden: true).get.as_a.find! { |cat| cat["name"].as_s == FLEET_VEHICLES }
+    cat = staff_api.asset_categories(hidden: true).get.as_a.find! { |cat| cat["name"].as_s == CATEGORY_PARKING }
     type = staff_api.asset_types(category_id: cat["id"].as_s).get.as_a.find! { |cat| cat["name"].as_s == FLEET_VEHICLES }
     type["id"].as_s
   end
@@ -451,7 +483,7 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
         end
 
         # create a card
-        person = Person.new("Fleet-Vehicle", vehicle.vehicle_name, "fleet_vehicle-#{vehicle.license_plate}", [] of String)
+        person = Person.new("Fleet-Vehicle", vehicle.vehicle_name[0...20], "fleet_vehicle-#{vehicle.license_plate}"[0...20], [] of String)
         card = CardUpdate.new(sub_id, nil, [vehicle.license_plate], person)
         orbility.add_card(card).get
       rescue error
@@ -481,8 +513,8 @@ class Orbility::ParkingUserSync < PlaceOS::Driver
   ASSIGNED_SPOTS = "_PARKING_SPACES_"
 
   protected getter space_assignment_asset_type : String do
-    cat = staff_api.asset_categories(hidden: true).get.as_a.find { |cat| cat["name"].as_s == ASSIGNED_SPOTS }
-    type = staff_api.asset_types(category_id: cat["id"].as_s).get.as_a.find! { |cat| cat["name"].as_s == ASSIGNED_SPOTS }
+    cat = staff_api.asset_categories(hidden: true).get.as_a.find! { |asset| asset["name"].as_s == CATEGORY_PARKING }
+    type = staff_api.asset_types(category_id: cat["id"].as_s).get.as_a.find! { |asset| asset["name"].as_s == ASSIGNED_SPOTS }
     type["id"].as_s
   end
 

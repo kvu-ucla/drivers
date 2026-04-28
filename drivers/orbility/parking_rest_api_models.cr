@@ -281,6 +281,9 @@ module Orbility
 
     @[JSON::Field(key: "firstUseType")]
     getter first_use_type : FirstUseType = FirstUseType::EntryOrExit
+
+    @[JSON::Field(key: "firUseTypId")]
+    getter first_use_type_id : FirstUseType = FirstUseType::EntryOrExit
   end
 
   # example add {"cardNumber": 4,"subscriptionId":4,"licencePlates":["test1"],"artificialPerson":{"isCompany": false, "name":"von Takach","firstName": "Steve", "companyNumber": "12345", "emails": ["steve@vontaka.ch"]}}
@@ -308,10 +311,14 @@ module Orbility
     @[JSON::Field(key: "firstUseType")]
     getter first_use_type : FirstUseType = FirstUseType::EntryOrExit
 
+    @[JSON::Field(key: "firUseTypId")]
+    getter first_use_type_id : FirstUseType = FirstUseType::EntryOrExit
+
     def initialize(@subscription_id, @access_card_no, @licence_plates, @person, id : Int64? = nil)
       @id = id || @subscription_id
       @license_plate_registered = !@licence_plates.empty?
       @first_use_type = FirstUseType::EntryOrExit
+      @first_use_type_id = FirstUseType::EntryOrExit
     end
   end
 
@@ -367,14 +374,14 @@ module Orbility
     @[JSON::Field(key: "endDate")]
     getter end_date : Time
 
-    getter category : Int32
+    getter category : Int32?
 
     @[JSON::Field(key: "userInfo")]
     getter user_info : UserInfo
 
     getter access : Access
 
-    def initialize(@start_date, @end_date, @user_info, @access, @category = 0, @id = nil)
+    def initialize(@start_date, @end_date, @user_info, @access, @category = nil, @id = nil)
     end
   end
 
