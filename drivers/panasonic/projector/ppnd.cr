@@ -2,6 +2,7 @@ require "placeos-driver"
 require "placeos-driver/interface/powerable"
 require "placeos-driver/interface/muteable"
 require "placeos-driver/interface/switchable"
+require "placeos-driver/interface/device_info"
 require "http-client-digest_auth"
 require "./ppnd_models"
 
@@ -14,6 +15,7 @@ require "./ppnd_models"
 class Panasonic::Projector::PPND < PlaceOS::Driver
   include Interface::Powerable
   include Interface::Muteable
+  include Interface::DeviceInfo
 
   enum Input
     COMPUTER
@@ -89,6 +91,16 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
       # freeze not supported
       # query_freeze_status
     end
+  end
+
+  def device_info : Descriptor
+    Descriptor.new(
+      make: "Panasonic",
+      model: self[:model]?.try(&.as_s) || "Unknown",
+      serial: self[:serial_number]?.try(&.as_s),
+      mac_address: self[:mac_address]?.try(&.as_s),
+      hostname: self[:projector_name]?.try(&.as_s)
+    )
   end
 
   # ====== Authentication helpers ======
