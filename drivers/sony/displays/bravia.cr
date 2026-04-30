@@ -17,8 +17,23 @@ class Sony::Displays::Bravia < PlaceOS::Driver
   descriptive_name "Sony Bravia LCD Display"
   generic_name :Display
 
+  default_settings({
+    force_targets: false
+  })
+
+  getter power_target : Bool? = nil
+  getter input_target : Input? = nil
+  getter force_target : Bool = false
+
+  def on_update
+    @force_target = setting?(Bool, :force_targets) || false
+    @power_target = nil unless @force_target
+    @input_target = nil unless @force_target
+  end
+
   enum Input : UInt32
-    {% for idx in 0..3 %}
+    Hdmi = 10000_0001
+    {% for idx in 1..3 %}
       Tv{{idx}}     = {{ idx }}
       Hdmi{{idx}}   = {{10000_0000 + idx}}
       Mirror{{idx}} = {{50000_0000 + idx}}
@@ -32,13 +47,16 @@ class Sony::Displays::Bravia < PlaceOS::Driver
     end
 
     def to_param : String
-      value.to_s.rjust(5, '0')
+      value.to_s.rjust(16, '0')
     end
   end
 
   include Interface::InputSelection(Input)
 
   def switch_to(input : Input)
+    input = Input::Hdmi if input.hdmi1?
+    @input_target = input
+
     logger.debug { "switching input to #{input}" }
     request(Command::Input, input.to_param)
     self[:input] = input.to_s
@@ -52,12 +70,11 @@ class Sony::Displays::Bravia < PlaceOS::Driver
   def on_load
     self[:volume_min] = 0
     self[:volume_max] = 100
+    on_update
   end
 
   def connected
-    schedule.every(30.seconds, true) do
-      do_poll
-    end
+    schedule.every(30.seconds, true) { do_poll }
   end
 
   def disconnected
@@ -65,8 +82,10 @@ class Sony::Displays::Bravia < PlaceOS::Driver
   end
 
   def power(state : Bool)
+    @power_target = state
     request(Command::Power, state)
-    power?
+    self[:power] = state
+    state
   end
 
   def power?
@@ -124,6 +143,7 @@ class Sony::Displays::Bravia < PlaceOS::Driver
   end
 
   def do_poll
+    power?.get
     if self[:power]?
       input?
       mute?
@@ -155,8 +175,17 @@ class Sony::Displays::Bravia < PlaceOS::Driver
     return task.try(&.abort("error")) if param.first? == MessageType::Error.value
     case MessageType.from_value?(data[2])
     when MessageType::Answer
-      update_status cmd, param
-      task.try &.success
+      # check if this is a response to a command
+      if task.try(&.name)
+        if convert_binary(param).includes?("0")
+          task.try &.success(true)
+        else
+          task.try &.abort(false)
+        end
+      else
+        result = update_status cmd, param
+        task.try &.success(result)
+      end
     when MessageType::Notify
       update_status cmd, param
     else
@@ -221,8 +250,8 @@ class Sony::Displays::Bravia < PlaceOS::Driver
   protected def request(command, parameter, **options)
     cmd = command.function
     parameter = parameter ? 1 : 0 if parameter.is_a?(Bool)
-    param = parameter.to_s.rjust(16, '0')
-    do_send(MessageType::Control, cmd, param, **options)
+    param = parameter.to_s.rjust(16, '0') 
+    do_send(MessageType::Control, cmd, param, **options.merge({name: command.to_s.downcase}))
   end
 
   protected def query(state, **options)
@@ -237,9 +266,24 @@ class Sony::Displays::Bravia < PlaceOS::Driver
 
   protected def update_status(cmd : Command, param)
     parsed_data = convert_binary(param)
+    logger.debug { "Sony status: #{cmd} = #{parsed_data}" }
+
     case cmd
     when .power?
-      self[:power] = parsed_data.to_i == 1
+      power_on = parsed_data.to_i == 1
+      self[:power] = power_on
+
+      power_target = @power_target
+      if !power_target.nil?
+        if power_on == power_target
+          @power_target = nil unless @force_target
+        else
+          logger.info { "forcing power state to: #{power_target}" }
+          power(power_target)
+        end
+      end
+
+      power_on
     when .mute?
       self[:mute] = parsed_data.to_i == 1
     when .audio_mute?
@@ -251,7 +295,19 @@ class Sony::Displays::Bravia < PlaceOS::Driver
     when .mac_address?
       self[:mac_address] = parsed_data.split('#')[0]
     when .input?
-      self[:input] = Input.from_param(parsed_data[7..15])
+      current_input = Input.from_param(parsed_data[7..15])
+      self[:input] = current_input
+
+      if input_target = @input_target
+        if current_input == input_target
+          @input_target = nil unless @force_target
+        else
+          logger.info { "forcing input to: #{input_target}" }
+          switch_to(input_target)
+        end
+      end
+
+      current_input
     end
   end
 end

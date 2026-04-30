@@ -6,6 +6,7 @@ require "link-header"
 require "simple_retry"
 require "place_calendar"
 require "./booking_model"
+require "base64"
 
 # This comment is to force a recompile of the driver with updated models.
 
@@ -451,19 +452,22 @@ class Place::StaffAPI < PlaceOS::Driver
       starting = item.valid_from
       ending = item.valid_until
 
-      next false if starting && starting > now_unix
-      next false if ending && ending <= now_unix
-      true
+      next true if starting && starting > now_unix
+      next true if ending && ending <= now_unix
+      false
     end
 
     # return the remaining media list
     media
   end
 
-  def signage_download_url(upload_id : String)
+  @[Security(Level::Support)]
+  def signage_download_url(upload_id : String, ext : String = "jpg")
     uri = URI.parse(config.uri.as(String))
-    uri.path = "/api/engine/v2/uploads/#{upload_id}/download/#{@api_key}/false/image.jpg"
-    uri
+    upload_id = Base64.urlsafe_encode(upload_id, padding: false)
+    api_key = Base64.urlsafe_encode(@api_key, padding: false)
+    uri.path = "/api/engine/v2/uploads/#{upload_id}/download/#{api_key}/false/i.#{ext}"
+    uri.to_s
   end
 
   # ===================================
@@ -982,6 +986,13 @@ class Place::StaffAPI < PlaceOS::Driver
     JSON.parse(response.body)
   end
 
+  def booking_guests(booking_id : String | Int64)
+    logger.debug { "getting guests for booking #{booking_id}" }
+    response = get("/api/staff/v1/bookings/#{booking_id}/guests", headers: authentication)
+    raise "issue getting guests for booking #{booking_id}: #{response.status_code}" unless response.success?
+    JSON.parse(response.body)
+  end
+
   # lists asset IDs based on the parameters provided
   #
   # booking_type is required unless event_id or ical_uid is present
@@ -1051,6 +1062,59 @@ class Place::StaffAPI < PlaceOS::Driver
       memory:   PlaceOS::Driver::Stats.memory_usage,
       queue:    @__queue__.@queue.size,
     }
+  end
+
+  # ===================================
+  # ASSETS
+  # ===================================
+
+  def asset_categories(hidden : Bool? = nil)
+    params = URI::Params.new
+    params["hidden"] = hidden.to_s unless hidden.nil?
+    logger.debug { "getting asset categories (#{params})" }
+    response = get("/api/engine/v2/asset_categories", params, headers: authentication)
+    raise "issue getting asset categories: #{response.status_code}" unless response.success?
+    JSON.parse(response.body)
+  end
+
+  def asset_types(category_id : String? = nil, zone_id : String? = nil, brand : String? = nil, model_number : String? = nil)
+    params = URI::Params.new
+    params["model_number"] = model_number.to_s if model_number.presence
+    params["category_id"] = category_id.to_s if category_id.presence
+    params["zone_id"] = zone_id.to_s if zone_id.presence
+    params["brand"] = brand.to_s if brand.presence
+    logger.debug { "getting asset types (#{params})" }
+    response = get("/api/engine/v2/asset_types", params, headers: authentication)
+    raise "issue getting asset types: #{response.status_code}" unless response.success?
+    JSON.parse(response.body)
+  end
+
+  def assets(
+    type_id : String? = nil,
+    zone_id : String? = nil,
+    order_id : String? = nil,
+    barcode : String? = nil,
+    serial_number : String? = nil,
+    bookable : Bool? = nil,
+    accessible : Bool? = nil,
+    features : Array(String)? = nil,
+    zones : Array(String)? = nil,
+  )
+    params = URI::Params.new
+    params["type_id"] = type_id.to_s if type_id.presence
+    params["zone_id"] = zone_id.to_s if zone_id.presence
+    params["order_id"] = order_id.to_s if order_id.presence
+    params["barcode"] = barcode.to_s if barcode.presence
+    params["serial_number"] = serial_number.to_s if serial_number.presence
+    params["bookable"] = bookable.to_s unless bookable.nil?
+    params["accessible"] = accessible.to_s unless accessible.nil?
+    params["features"] = features.join(',') if features && !features.empty?
+    params["zones"] = zones.join(',') if zones && !zones.empty?
+    params["limit"] = 1000.to_s
+    logger.debug { "getting assets (#{params})" }
+    response = get("/api/engine/v2/assets", params, headers: authentication)
+    raise "issue getting assets: #{response.status_code}" unless response.success?
+    JSON.parse(response.body)
   end
 
   # ===================================

@@ -1,5 +1,6 @@
 require "./cres_next"
 require "placeos-driver/interface/switchable"
+require "placeos-driver/interface/standby_image"
 require "uri"
 
 class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
@@ -7,12 +8,13 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
   alias Output = Int32
   include Interface::Switchable(Input, Output)
   include Interface::InputSelection(Input)
+  include Interface::StandbyImage
   include Crestron::Receiver
 
   descriptive_name "Crestron NVX Receiver"
   generic_name :Decoder
   description <<-DESC
-    Crestron NVX network media decoder.
+    Crestron NVX network media decoder
   DESC
 
   uri_base "wss://192.168.0.5/websockify"
@@ -172,11 +174,21 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     ws_update "/Osd/IsEnabled", enabled, name: :set_osd_enabled
   end
 
-  def set_background_image(url : String, output_index : Int32 = 1)
+  @[Security(Level::Support)]
+  def enable_background_image(state : Bool = true, output_index : Int32? = nil)
+    output_index ||= 1
+    ws_update "/BackgroundImage/Outputs/Output#{output_index}/IsEnabled", state, name: "set_output#{output_index}_image_enabled"
+  end
+
+  @[Security(Level::Administrator)]
+  def set_background_image(url : String, output_index : Int32? = nil) : Nil
+    output_index ||= 1
     uri = URI.parse(url)
     raise ArgumentError.new("invalid URL provided: #{url}") unless uri.scheme.presence && uri.host.presence && uri.path.presence
 
+    ws_update "/BackgroundImage/Outputs/Output#{output_index}/HostBackgroundImage", "Remote", name: "set_output#{output_index}_image_location"
     ws_update "/BackgroundImage/Outputs/Output#{output_index}/RemoteServer/ServerPath", url, name: "set_output#{output_index}_image"
+    ws_update "/BackgroundImage/Outputs/Output#{output_index}/RemoteServer/IsRefreshImageEnabled", false, name: "set_output#{output_index}_image_refresh"
   end
 
   protected def switch_stream(stream_reference : String | Int32, layer : SwitchLayer)
