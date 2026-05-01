@@ -153,11 +153,11 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     end
     current_booking = bookings.find do |booking|
       next if booking["isInstantMeeting"] == true
-      booking["startTime"].as_i64 > @current_time && booking["endTime"].as_i64 > @current_time
+      booking["endTime"].as_i64 > @current_time
     end
 
     self[:current_booking] = current_booking
-    self[:booking_in_progress] = !current_booking.nil?
+    self[:booking_in_progress] = !current_booking.nil? && current_booking["startTime"].as_i64 <= @current_time
   end
 
   # determine next booking, i.e. booking that is directly after current booking
