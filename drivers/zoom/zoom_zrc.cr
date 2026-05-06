@@ -246,8 +246,8 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     response = post("/api/health", headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     msg = JSON.parse(response.body)
-
     logger.debug { "#{msg}" }
+    msg
   end
 
   # =========================================================
