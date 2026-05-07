@@ -244,12 +244,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def get_health : JSON::Any
     response = get("/health", headers: JSON_HEADERS)
-    if response.status_code.in?(301, 302, 307, 308)
-      location = response.headers["Location"]?
-      raise "redirect with no location header" unless location
-      response = HTTP::Client.get(location)
-    end
     raise "request failed with #{response.status_code}" unless response.success?
+    location = response.headers["Location"]?                                                                                                           
+    logger.debug { "redirect location: #{location}" }   
     msg = JSON.parse(response.body)
     logger.debug { "#{msg}" }
     msg
