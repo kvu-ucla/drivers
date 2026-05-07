@@ -244,9 +244,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def get_health : JSON::Any
     response = get("/health", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
     location = response.headers["Location"]?                                                                                                           
     logger.debug { "redirect location: #{location}" }   
+    raise "request failed with #{response.status_code}" unless response.success?
     msg = JSON.parse(response.body)
     logger.debug { "#{msg}" }
     msg
