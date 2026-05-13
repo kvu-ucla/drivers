@@ -35,55 +35,68 @@ module Place::CalendarCommon
     @wait_time : Time::Span = 300.milliseconds
 
     @mailer_from : String? = nil
-  end
+  
+    def on_unload
+      @in_flight.close
+      @channel.close
+    end
 
-  def on_unload
-    @in_flight.close
-    @channel.close
-  end
+    def on_update
+      logger.debug { "update received #{config.settings.to_pretty_json}" }
 
-  def on_update
-    if proxy_config = setting?(NamedTuple(host: String, port: Int32, auth: NamedTuple(username: String, password: String)?), :proxy)
-      ConnectProxy.proxy_uri = "http://#{proxy_config[:host]}:#{proxy_config[:port]}"
-      if proxy_auth = proxy_config[:auth]
-        ConnectProxy.username = proxy_auth[:username]
-        ConnectProxy.password = proxy_auth[:password]
+      if proxy_config = setting?(NamedTuple(host: String, port: Int32, auth: NamedTuple(username: String, password: String)?), :proxy)
+        ConnectProxy.proxy_uri = "http://#{proxy_config[:host]}:#{proxy_config[:port]}"
+        if proxy_auth = proxy_config[:auth]
+          ConnectProxy.username = proxy_auth[:username]
+          ConnectProxy.password = proxy_auth[:password]
+        end
       end
+
+      ConnectProxy.verify_tls = !!setting?(Bool, :proxy_verify_tls)
+      ConnectProxy.disable_crl_checks = !!setting?(Bool, :proxy_disable_crl)
+
+      @service_account = setting?(String, :calendar_service_account).presence
+      @rate_limit = setting?(Int32, :rate_limit) || 10
+      @wait_time = 1.second / @rate_limit
+
+      @mailer_from = setting?(String, :mailer_from).presence || @service_account
+      @templates = setting?(Templates, :email_templates) || Templates.new
+
+      @in_flight.close
+      @channel.close
+
+      # Work around crystal limitation of splatting a union
+      @client = begin
+        cal_config = setting(GoogleParams, :calendar_config)
+        cli = ::PlaceCalendar::Client.new(**cal_config)
+
+        # only google uses the rate limiter
+        @channel = Channel(Nil).new(9)
+        @in_flight = Channel(Nil).new(10)
+        spawn { rate_limiter }
+        cli
+      rescue
+        cal_config = setting(OfficeParams, :calendar_config)
+        ::PlaceCalendar::Client.new(**cal_config)
+      end
+      logger.debug { "update applied successfully" }
+    rescue error
+      logger.debug(exception: error) { "failed to apply settings: #{config.settings.to_pretty_json}" }
     end
+  end
 
-    ConnectProxy.verify_tls = !!setting?(Bool, :proxy_verify_tls)
-    ConnectProxy.disable_crl_checks = !!setting?(Bool, :proxy_disable_crl)
-
-    @service_account = setting?(String, :calendar_service_account).presence
-    @rate_limit = setting?(Int32, :rate_limit) || 10
-    @wait_time = 1.second / @rate_limit
-
-    @mailer_from = setting?(String, :mailer_from).presence || @service_account
-    @templates = setting?(Templates, :email_templates) || Templates.new
-
-    @in_flight.close
-    @channel.close
-
-    # Work around crystal limitation of splatting a union
-    @client = begin
-      config = setting(GoogleParams, :calendar_config)
-      cli = ::PlaceCalendar::Client.new(**config)
-
-      # only google uses the rate limiter
-      @channel = Channel(Nil).new(9)
-      @in_flight = Channel(Nil).new(10)
-      spawn { rate_limiter }
-      cli
-    rescue
-      config = setting(OfficeParams, :calendar_config)
-      ::PlaceCalendar::Client.new(**config)
-    end
+  protected def check_client : ::PlaceCalendar::Client
+    client_ref = @client
+    raise "no API client available. Check driver settings" unless client_ref
+    client_ref
   end
 
   protected def client(&)
+    client_ref = check_client
+
     # office365 execute queries against the users mailbox and hence doesn't require rate limiting
-    if @client.not_nil!.client_id == :office365
-      return yield(@client.not_nil!)
+    if client_ref.client_id == :office365
+      return yield(client_ref)
     end
 
     if (@wait_time * @queue_size) > 90.seconds
@@ -96,7 +109,7 @@ module Place::CalendarCommon
 
     begin
       @queue_lock.synchronize { @queue_size -= 1; @flight_size += 1 }
-      result = yield @client.not_nil!
+      result = yield client_ref
       result
     ensure
       @in_flight.receive
@@ -280,7 +293,7 @@ module Place::CalendarCommon
 
     logger.debug { "listing events for #{calendar_id}" }
 
-    _client = @client.not_nil!
+    _client = check_client
     events = if _client.client_id == :google
                _client.calendar.as(PlaceCalendar::Google).list_events(user_id, calendar_id,
                  period_start: period_start,
@@ -396,7 +409,7 @@ module Place::CalendarCommon
 
   # returns: google or office365
   def calendar_service_name
-    @client.not_nil!.client_id
+    check_client.client_id
   end
 
   @[PlaceOS::Driver::Security(Level::Support)]

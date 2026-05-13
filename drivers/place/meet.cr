@@ -113,6 +113,8 @@ class Place::Meet < PlaceOS::Driver
     @startup_exec = setting?(Array(AccessoryComplex::Exec), :startup_exec)
     @shutown_exec = setting?(Array(AccessoryComplex::Exec), :shutown_exec)
 
+    self[:active] = setting?(Bool, :active_state)
+
     @join_lock.synchronize do
       subscriptions.clear
 
@@ -234,6 +236,7 @@ class Place::Meet < PlaceOS::Driver
       end
     {% end %}
 
+    define_setting(:active_state, state)
     state
   end
 
