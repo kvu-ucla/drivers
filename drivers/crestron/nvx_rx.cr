@@ -35,7 +35,7 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     @audio_follows_video = audio_follows_video.nil? ? true : audio_follows_video
 
     # NVX hardware can be confiured a either a RX or TX unit - check this
-    # device is in the correct mode.
+    # device is in the correct mode
     # https://sdkcon78221.crestron.com/sdk/DM_NVX_REST_API/Content/Topics/Objects/DeviceSpecific.htm?Highlight=DeviceMode
     query("/DeviceSpecific/DeviceMode") do |mode|
       # "DeviceMode":"Transmitter|Receiver",
@@ -347,14 +347,21 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     super
 
     raw_json = String.new data
-    json = JSON.parse(raw_json)
 
-    begin
-      if inputs = json.dig?("Device", "AvioV2", "Inputs").try &.as_h?
-        process_input_sync_status(inputs)
+    # The device sometimes bundles multiple JSON objects into a single frame
+    # separated by blank lines, so parse each line independently.
+    raw_json.each_line do |line|
+      line = line.strip
+      next if line.empty?
+
+      begin
+        json = JSON.parse(line)
+        if inputs = json.dig?("Device", "AvioV2", "Inputs").try &.as_h?
+          process_input_sync_status(inputs)
+        end
+      rescue e
+        logger.debug { "unsolicited parse error: #{e.message}" }
       end
-    rescue e
-      logger.debug { "unsolicited parse error: #{e.message}" }
     end
   end
 end
