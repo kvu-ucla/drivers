@@ -165,7 +165,7 @@ class Sony::Camera::CGI < PlaceOS::Driver
   @focus_range = 0..61440
 
   def query_status(priority : Int32 = 0)
-    # Response looks like:
+    # Response looks like
     # AbsolutePTZF=15400,fd578,0000,cbde&PanMovementRange=eac00,15400
     query("/command/inquiry.cgi?inq=ptzf", priority: priority) do |response|
       # load the current state
