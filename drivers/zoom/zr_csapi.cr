@@ -840,6 +840,8 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     when "RecordingConsent"
       is_show = json_response["RecordingConsent"]["isShow"]?
       do_send("zCommand Agree Recording: on") if is_show
+    when "MeetingNeedsPassword"
+      self[:prompt_passcode] = json_response["MeetingNeedsPassword"]["needsPassword"]?
     end
 
     # other response types
