@@ -85,7 +85,7 @@ class Place::Meet < PlaceOS::Driver
   @ignore_fls_signal : Bool = false
 
   @startup_exec : Array(AccessoryComplex::Exec)? = nil
-  @shutown_exec : Array(AccessoryComplex::Exec)? = nil
+  @shutdown_exec : Array(AccessoryComplex::Exec)? = nil
 
   # core includes: 'current_routes' hash
   # but we override it here for LLM integration
@@ -263,7 +263,7 @@ class Place::Meet < PlaceOS::Driver
 
   @default_routes : Hash(String, String) = {} of String => String
 
-  # routes for toggling participants on zoom room
+  #routes for toggling participants on zoom room 
   @participant_routes : Hash(String, String) = {} of String => String
 
   protected def init_signal_routing
@@ -303,21 +303,6 @@ class Place::Meet < PlaceOS::Driver
     @participant_routes.each { |output, input| route_signal(input, output) }
   rescue error
     logger.warn(exception: error) { "error applying participant routes" }
-  end
-
-  def apply_dsp_defaults(preset : Int32)
-    dsp = system[DEFAULT_DSP_MOD]
-    dsp.set_preset(preset)
-  rescue error
-    logger.warn(exception: error) { "error applying dsp default preset: #{preset}" }
-  end
-
-  def apply_camera_autoframing(state : Bool)
-    system.all(:Camera).each do |camera|
-      camera.autoframe(state)
-    rescue error
-      logger.warn(exception: error) { "error applying autoframing for: #{camera}" }
-    end
   end
 
   @[Description("available inputs and outputs. Route using id keys")]
@@ -1582,10 +1567,10 @@ class Place::Meet < PlaceOS::Driver
   end
 
   # =========================
-  # FLS Subscription
-  # =========================
+  # FLS Subscription 
+  # =========================  
 
-  protected def init_fls
+  protected def init_fls 
     # Subscribe to Crestron Interface I/O State
     system.subscribe(:CrestronInterface_1, :state) do |_sub, fls_state|
       new_state = JSON.parse(fls_state).as_bool? || false
@@ -1612,4 +1597,5 @@ class Place::Meet < PlaceOS::Driver
       end
     end
   end
+
 end
