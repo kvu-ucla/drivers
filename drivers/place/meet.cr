@@ -190,11 +190,11 @@ class Place::Meet < PlaceOS::Driver
 
     if state
       @local_preview_outputs.each { |device| sys[device].power true } # Power on preview displays
-      apply_master_audio_default
-      apply_camera_defaults
+      # apply_master_audio_default
+      # apply_camera_defaults
       # the reason for this as when linking, the current routes are applied to the remote room
       apply_default_routes unless linked?
-      apply_mic_defaults
+      # apply_mic_defaults
 
       if first_output = @tabs.first?.try &.inputs.first
         selected_input first_output
@@ -203,12 +203,12 @@ class Place::Meet < PlaceOS::Driver
       perform_executes(@startup_exec)
     else
       unlink_systems if unlink
-      audio_mute(true) rescue nil
+      # audio_mute(true) rescue nil
 
       @local_outputs.each { |output| unroute(output) }
       @local_preview_outputs.each { |output| unroute(output) }
 
-      mute_microphones
+      # mute_microphones
 
       if devices = @shutdown_devices
         devices.each { |device| sys[device].power false }
