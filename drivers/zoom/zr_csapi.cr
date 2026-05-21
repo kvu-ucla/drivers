@@ -248,6 +248,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
   # Input meeting password
   def input_password(password : String)
     do_send("zCommand Input Meeting Password: #{password}", name: "input_password")
+    self[:prompt_passcode] = false
   end
 
   # Leave current meeting
