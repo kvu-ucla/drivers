@@ -111,7 +111,7 @@ class Place::Meet < PlaceOS::Driver
 
     @ignore_fls_signal = setting?(Bool, :ignore_fls_signal) || false
     @startup_exec = setting?(Array(AccessoryComplex::Exec), :startup_exec)
-    @shutown_exec = setting?(Array(AccessoryComplex::Exec), :shutown_exec)
+    @shutdown_exec = setting?(Array(AccessoryComplex::Exec), :shutdown_exec)
 
     self[:active] = setting?(Bool, :active_state)
 
@@ -217,7 +217,7 @@ class Place::Meet < PlaceOS::Driver
       end
       sys[@local_vidconf].hangup if sys.exists?(@local_vidconf)
 
-      perform_executes(@shutown_exec)
+      perform_executes(@shutdown_exec)
     end
 
     remotes_before.each { |room| room.power(state, unlink) }
