@@ -195,8 +195,6 @@ class Place::Meet < PlaceOS::Driver
       # the reason for this as when linking, the current routes are applied to the remote room
       apply_default_routes unless linked?
       apply_mic_defaults
-      apply_dsp_defaults(1)
-      system["Camera_1"].autoframe(true)
 
       if first_output = @tabs.first?.try &.inputs.first
         selected_input first_output
@@ -206,9 +204,6 @@ class Place::Meet < PlaceOS::Driver
     else
       unlink_systems if unlink
       audio_mute(true) rescue nil
-      apply_dsp_defaults(2)
-      apply_camera_autoframing(false)
-      system["ZoomCSAPI_1"].call_disconnect
 
       @local_outputs.each { |output| unroute(output) }
       @local_preview_outputs.each { |output| unroute(output) }
@@ -268,7 +263,7 @@ class Place::Meet < PlaceOS::Driver
 
   @default_routes : Hash(String, String) = {} of String => String
 
-  #routes for toggling participants on zoom room 
+  # routes for toggling participants on zoom room
   @participant_routes : Hash(String, String) = {} of String => String
 
   protected def init_signal_routing
@@ -321,7 +316,7 @@ class Place::Meet < PlaceOS::Driver
     system.all(:Camera).each do |camera|
       camera.autoframe(state)
     rescue error
-        logger.warn(exception: error) { "error applying autoframing for: #{camera}" }
+      logger.warn(exception: error) { "error applying autoframing for: #{camera}" }
     end
   end
 
@@ -1587,10 +1582,10 @@ class Place::Meet < PlaceOS::Driver
   end
 
   # =========================
-  # FLS Subscription 
-  # =========================  
+  # FLS Subscription
+  # =========================
 
-  protected def init_fls 
+  protected def init_fls
     # Subscribe to Crestron Interface I/O State
     system.subscribe(:CrestronInterface_1, :state) do |_sub, fls_state|
       new_state = JSON.parse(fls_state).as_bool? || false
@@ -1617,5 +1612,4 @@ class Place::Meet < PlaceOS::Driver
       end
     end
   end
-
 end
