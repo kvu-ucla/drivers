@@ -251,6 +251,12 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     self[:prompt_passcode] = false
   end
 
+  # Cancel meeting password entry
+  def cancel_password
+    do_send("zCommand Cancel Entering Meeting Password", name: "cancel_password")
+    self[:prompt_passcode] = false
+  end
+
   # Leave current meeting
   def call_disconnect
     do_send("zCommand Call Disconnect", name: "call_disconnect")
