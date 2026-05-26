@@ -2,6 +2,7 @@ require "placeos-driver"
 require "place_calendar"
 require "placeos-driver/interface/locatable"
 require "placeos-driver/interface/sensor"
+require "placeos-driver/stats"
 
 class Place::Bookings < PlaceOS::Driver
   include Interface::Locatable
@@ -22,7 +23,7 @@ class Place::Bookings < PlaceOS::Driver
     cache_polling_period:   5,
     cache_days:             30,
 
-    # consider sensor data older than this unreliable
+    # consider sensor data older than this unreliable.
     sensor_stale_minutes: 8,
 
     # as graph API is eventually consistent we want to delay syncing for a moment
@@ -442,11 +443,11 @@ class Place::Bookings < PlaceOS::Driver
       host_details = booking["extension_data"]?.try(&.[]?("host_override")) || booking["host"]?
 
       self[:booking_details] = {
-        event_id:   booking["id"]?,
-        started_at: start_time,
-        ending_at:  ending_at_calc,
-        event_title: booking["title"]?,
-        event_host: host_details,
+        event_id:      booking["id"]?,
+        started_at:    start_time,
+        ending_at:     ending_at_calc,
+        event_title:   booking["title"]?,
+        event_host:    host_details,
         room_capacity: @room_capacity,
       }
 
@@ -645,8 +646,29 @@ class Place::Bookings < PlaceOS::Driver
   end
 
   @sensor_subscription : PlaceOS::Driver::Subscriptions::Subscription? = nil
+  @checking_sensors : Bool = false
 
+  # `check_for_sensors` is reachable concurrently - inline from `poll_events`
+  # and from the `schedule.in(1.second) { check_for_sensors }` one-shot fired on
+  # a booking change - and it yields at the blocking `.get` calls below. Without
+  # this guard two runs interleave between the unsubscribe (top) and the
+  # re-subscribe (bottom): both subscribe, only the last assignment is retained
+  # in `@sensor_subscription`, and the other subscription is orphaned. It is
+  # never unsubscribed, its callback fires forever, and they accumulate without
+  # bound. The flag is set/cleared under `@push_mutex` so the check-and-set is
+  # atomic even under multi-threaded execution, and the guard is split from
+  # `perform_sensor_search` so the early return can't run the `ensure` that
+  # clears the flag for the in-flight run. The mutex is only held for the flag
+  # ops, never across the blocking `.get` calls.
   protected def check_for_sensors
+    @push_mutex.synchronize do
+      return if @checking_sensors
+      @checking_sensors = true
+    end
+    perform_sensor_search
+  end
+
+  protected def perform_sensor_search
     @perform_sensor_search = true
     drivers = system.implementing(Interface::Sensor)
 
@@ -719,6 +741,8 @@ class Place::Bookings < PlaceOS::Driver
     self[:presence] = nil
     self[:sensor_name] = nil
     self[:sensor_stale] = true
+  ensure
+    @push_mutex.synchronize { @checking_sensors = false }
   end
 
   protected def is_stale?(timestamp : Int64?) : Bool
@@ -982,5 +1006,13 @@ class Place::Bookings < PlaceOS::Driver
         logger.error(exception: error) { "invalid syllabus plus resource id #{resource_id} in #{config.control_system.not_nil!.name}" }
       end
     end
+  end
+
+  def __stat_mem__
+    ::PlaceOS::Driver::Stats.memory_usage
+  end
+
+  def __stat_fiber__
+    ::PlaceOS::Driver::Stats.fiber_breakdown
   end
 end
