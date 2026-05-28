@@ -224,6 +224,7 @@ class Zoom::ZrCSAPI < PlaceOS::Driver
     command = "zCommand Dial Join meetingNumber: #{meeting_number}"
     do_send(command, name: "dial_join")
     sleep @response_delay.milliseconds
+    do_send(command, name: "dial_join")
     self["Call"]
     self[:meeting_started_time] = @current_time
   end
