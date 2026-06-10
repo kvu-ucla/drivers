@@ -74,6 +74,11 @@ class Place::Parking::Approvals < PlaceOS::Driver
   end
 
   def on_update
+    if @update_expected
+      @update_expected = false
+      return
+    end
+
     @poll_rate = (setting?(Int32, :poll_rate) || 20).minutes
     timezone = config.control_system.not_nil!.timezone.presence || setting?(String, :time_zone).presence || "Australia/Sydney"
     @timezone = Time::Location.load(timezone)
@@ -91,6 +96,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
 
     schedule.clear
     schedule.every(@poll_rate) { process_parking_bookings }
+    init_crossings_tracking
   end
 
   class ZoneDetails
@@ -107,7 +113,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
   getter! car_license_ext : String
   getter building_id : String { location.building_id.get.as_s }
   getter building_zone : ZoneDetails do
-    ZoneDetails.from_json staff_api.zone(building_id).get.to_json
+    ZoneDetails.from_json staff_api.zone(building_id).get_json
   end
 
   # ===================================
@@ -175,7 +181,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
     return unless event.booking_type == BOOKING_TYPE
     return unless event.zones.includes?(building_id)
 
-    booking = Booking.from_json(staff_api.get_booking(event.id).get.to_json)
+    booking = Booking.from_json(staff_api.get_booking(event.id).get_json)
 
     return if booking.recurring? # this will be an allocated parking spot
 
@@ -184,7 +190,11 @@ class Place::Parking::Approvals < PlaceOS::Driver
     case event.action
     when "create"
       return if event.approved
-      @sync_mutex.synchronize { check_approval(booking) }
+      # @sync_mutex.synchronize { check_approval(booking) }
+
+      # ensure only one place bookings can be approved.
+      # prevents race conditions
+      spawn { process_parking_bookings }
     when "cancelled", "rejected"
       @sync_mutex.synchronize { cleanup_parking(booking, event.action == "rejected") }
       # when "changed"
@@ -324,7 +334,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
     license_plate = nil if license_plate && license_plate.size > 12
 
     if license_plate.nil?
-      user_json = calendar.get_user(booking.user_email, additional_fields: {car_license_ext}).get.to_json rescue nil
+      user_json = calendar.get_user(booking.user_email, additional_fields: {car_license_ext}).get_json rescue nil
       license_plate = if user_json
                         user = DirUser.from_json(user_json)
                         user_plates(user).first?
@@ -401,7 +411,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
       period_start: starting,
       period_end: ending,
       limit: 10_000,
-    ).get.to_json).reject(&.instance).sort! { |a, b| a.created.as(Int64) <=> b.created.as(Int64) }
+    ).get_json).reject(&.instance).sort! { |a, b| a.created.as(Int64) <=> b.created.as(Int64) }
 
     bookings.each do |booking|
       next if booking.rejected || booking.deleted
@@ -430,7 +440,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
       period_end: ending,
       limit: 10_000,
       rejected: true
-    ).get.to_json)
+    ).get_json)
 
     bookings.each do |booking|
       next if booking.instance
@@ -445,7 +455,7 @@ class Place::Parking::Approvals < PlaceOS::Driver
       period_end: ending,
       limit: 10_000,
       deleted: true,
-    ).get.to_json)
+    ).get_json)
 
     bookings.each do |booking|
       next if booking.instance || booking.rejected
@@ -667,5 +677,93 @@ class Place::Parking::Approvals < PlaceOS::Driver
         approver_email: booking.approver_email.to_s,
       }
     )
+  end
+
+  # =====================
+  # CROSSINGS STATISTICS
+  # =====================
+
+  @crossings : CrossTrack = CrossTrack.new
+  @update_expected : Bool = false
+
+  class CrossTrack
+    include JSON::Serializable
+
+    property weekly_entries : Int32 = 0
+    property weekly_exits : Int32 = 0
+
+    property daily_entries : Int32 = 0
+    property daily_exits : Int32 = 0
+
+    property hourly_entries : Int32 = 0
+    property hourly_exits : Int32 = 0
+
+    property last_query_time : Time = 15.minutes.ago
+
+    def initialize
+    end
+  end
+
+  def init_crossings_tracking
+    @crossings = setting?(CrossTrack, :crossings) || CrossTrack.new
+    cron = setting?(String, :analytics_cron) || "*/15 * * * *"
+    schedule.cron(cron) { update_crossings }
+  end
+
+  def update_crossings
+    now = Time.local(@timezone)
+    minute = now.minute
+    hour = now.hour
+    day = now.day_of_week
+
+    # grab the latest crossing data
+    crossings = orbility.crossings(starting: @crossings.last_query_time.in(@timezone)).get_json(Array(Orbility::Crossing))
+    crossings = crossings.compact_map(&.to_small).sort! { |a, b| a.time <=> b.time }
+
+    entries = crossings.count(&.status.entered?)
+    exits = crossings.count(&.status.exited?)
+
+    # update the metrics
+    @crossings.weekly_entries += entries
+    @crossings.daily_entries += entries
+    @crossings.hourly_entries += entries
+    @crossings.weekly_exits += exits
+    @crossings.daily_exits += exits
+    @crossings.hourly_exits += exits
+
+    self[:hourly_entries] = @crossings.hourly_entries
+    self[:hourly_exits] = @crossings.hourly_exits
+
+    self[:daily_entries] = @crossings.daily_entries
+    self[:daily_exits] = @crossings.daily_exits
+
+    self[:weekly_entries] = @crossings.weekly_entries
+    self[:weekly_exits] = @crossings.weekly_exits
+
+    count = @crossings.weekly_entries - @crossings.weekly_exits
+    self[:occupancy_counter] = count >= 0 ? count : 0
+
+    # reset any fields based on the time
+    if minute < 5
+      @crossings.hourly_entries = 0
+      @crossings.hourly_exits = 0
+
+      if hour == 0
+        @crossings.daily_entries = 0
+        @crossings.daily_exits = 0
+
+        # saturday night reset
+        if day.sunday?
+          @crossings.weekly_entries = 0
+          @crossings.weekly_exits = 0
+        end
+      end
+    end
+
+    @crossings.last_query_time = now
+
+    # save the stats
+    @update_expected = true
+    define_setting(:crossings, @crossings)
   end
 end

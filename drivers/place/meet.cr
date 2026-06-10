@@ -159,7 +159,7 @@ class Place::Meet < PlaceOS::Driver
   @auto_route_on_join : Bool = false
 
   @startup_exec : Array(AccessoryComplex::Exec)? = nil
-  @shutown_exec : Array(AccessoryComplex::Exec)? = nil
+  @shutdown_exec : Array(AccessoryComplex::Exec)? = nil
 
   # core includes: 'current_routes' hash.
   # but we override it here for LLM integration
@@ -184,7 +184,8 @@ class Place::Meet < PlaceOS::Driver
     @auto_route_on_join = setting?(Bool, :auto_route_on_join) || false
 
     @startup_exec = setting?(Array(AccessoryComplex::Exec), :startup_exec)
-    @shutown_exec = setting?(Array(AccessoryComplex::Exec), :shutown_exec)
+    # shutown_exec was a previous spelling mistake, here for backwards compatibility
+    @shutdown_exec = setting?(Array(AccessoryComplex::Exec), :shutdown_exec) || setting?(Array(AccessoryComplex::Exec), :shutown_exec)
 
     self[:active] = setting?(Bool, :active_state)
 
@@ -283,7 +284,7 @@ class Place::Meet < PlaceOS::Driver
       end
       sys[@local_vidconf].hangup if sys.exists?(@local_vidconf)
 
-      perform_executes(@shutown_exec)
+      perform_executes(@shutdown_exec)
     end
 
     remotes_before.each { |room| room.power(state, unlink) }
@@ -297,7 +298,8 @@ class Place::Meet < PlaceOS::Driver
       end
     {% end %}
 
-    @ignore_update = Time.utc.to_unix
+    # better to not be ignored
+    # @ignore_update = Time.utc.to_unix
     define_setting(:active_state, state)
     state
   end
@@ -506,7 +508,7 @@ class Place::Meet < PlaceOS::Driver
 
     # merge in joined room help
     remote_rooms.each do |room|
-      help.merge! Help.from_json(room.local_help.get.to_json)
+      help.merge! Help.from_json(room.local_help.get_json)
     end
 
     self[:help] = help
@@ -519,7 +521,7 @@ class Place::Meet < PlaceOS::Driver
 
     # merge in joined room tabs
     remote_rooms.each do |room|
-      remote_tabs = Array(Tab).from_json(room.local_tabs.get.to_json)
+      remote_tabs = Array(Tab).from_json(room.local_tabs.get_json)
       remote_tabs.each do |remote_tab|
         next if remote_tab.merge_on_join == false
 
@@ -620,7 +622,7 @@ class Place::Meet < PlaceOS::Driver
 
     getter name : String? = nil
     property level_id : String | Array(String)? = nil
-    getter mute_id : String | Array(String)? { level_id }
+    property mute_id : String | Array(String)? { level_id }
 
     getter default_muted : Bool? = nil
     getter default_level : Float64? = nil
@@ -885,7 +887,7 @@ class Place::Meet < PlaceOS::Driver
         # merge in joined room mics
         remote_rooms.each do |room|
           begin
-            remote_area = LightingArea.from_json(room.local_lighting_area.get.to_json)
+            remote_area = LightingArea.from_json(room.local_lighting_area.get_json)
             light_area = light_area.join_with(remote_area)
           rescue error
             logger.warn(exception: error) { "ignoring lighting config in room #{room.name} (#{room.id})" }
@@ -912,7 +914,7 @@ class Place::Meet < PlaceOS::Driver
     # merge all the faders onto the joined touch panels
     levels = @local_light_levels.try(&.dup) || [] of LightingLevel
     remote_systems.each do |remote|
-      if remote_levels = Array(LightingLevel)?.from_json(remote.room_logic.local_light_levels.get.to_json)
+      if remote_levels = Array(LightingLevel)?.from_json(remote.room_logic.local_light_levels.get_json)
         levels.concat(remote_levels)
       end
     end
@@ -1023,7 +1025,7 @@ class Place::Meet < PlaceOS::Driver
   protected def update_available_accessories
     accessories = @local_accessories.dup
     remote_systems.each do |remote|
-      remote_accessories = Array(Accessory).from_json(remote.room_logic.local_accessories.get.to_json)
+      remote_accessories = Array(Accessory).from_json(remote.room_logic.local_accessories.get_json)
       accessories.concat(remote_accessories.map! { |acc|
         acc.remote = remote.system_id
         acc
@@ -1080,11 +1082,28 @@ class Place::Meet < PlaceOS::Driver
 
     # merge in joined room mics
     remote_rooms.each do |room|
-      local.concat Array(Microphone).from_json(room.local_mics.get.to_json)
+      local.concat Array(Microphone).from_json(room.local_mics.get_json)
+    end
+
+    # mics sharing a name represent the same mic exposed by multiple rooms
+    # combine them into a single entry with the level and mute ids merged
+    merged = [] of Microphone
+    local.each do |mic|
+      index = mic.name.try { |name| merged.index { |existing| existing.name == name } }
+      if index
+        # work on a copy so the local room config is not modified
+        existing = merged[index].dup
+        mute_ids = (fader_ids(existing.mute_id) + fader_ids(mic.mute_id)).uniq
+        existing.level_id = (fader_ids(existing.level_id) + fader_ids(mic.level_id)).uniq
+        existing.mute_id = mute_ids
+        merged[index] = existing
+      else
+        merged << mic
+      end
     end
 
     # expose the details to the UI
-    @available_mics = local
+    @available_mics = merged
     self[:microphones] = @available_mics.map do |mic|
       level_id = mic.level_id
       mute_id = mic.mute_id
@@ -1104,6 +1123,14 @@ class Place::Meet < PlaceOS::Driver
         max_level:      mic.max_level,
         rooms:          mic.rooms,
       }
+    end
+  end
+
+  protected def fader_ids(id : String | Array(String)?) : Array(String)
+    case id
+    in String        then [id]
+    in Array(String) then id.dup
+    in Nil           then [] of String
     end
   end
 

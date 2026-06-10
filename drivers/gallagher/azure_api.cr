@@ -27,7 +27,9 @@ class Gallagher::AzureAPI < PlaceOS::Driver
     azure_client_secret:     "8Q~6Em",
     azure_scopes:            "api://68",
 
-    unique_pdf_name: "email",
+    unique_pdf_name:   "email",
+    _fixed_pdf_id:     "33694",
+    _custom_href_base: "https://internal-domain:8904/api",
 
     # The division to pass when creating cardholders.
     default_division_href: "",
@@ -123,6 +125,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   @azure_client_id : String = ""
   @azure_client_secret : String = ""
   @azure_scopes : String = ""
+  @custom_href_base : String? = nil
 
   def on_update
     uri = URI.parse(config.uri.not_nil!)
@@ -133,8 +136,10 @@ class Gallagher::AzureAPI < PlaceOS::Driver
     @azure_client_id = setting(String, :azure_client_id)
     @azure_client_secret = setting(String, :azure_client_secret)
     @azure_scopes = setting(String, :azure_scopes)
+    @custom_href_base = setting(String?, :custom_href_base)
 
     @door_event_channel = setting?(String, :door_event_channel) || "event"
+    @fixed_pdf_id = setting?(String, :fixed_pdf_id).presence || ""
 
     new_map = {} of String => EventMap
     (setting?(Array(EventMap), :event_mappings) || [] of EventMap).each do |event|
@@ -203,15 +208,15 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   getter! uri_base : String
-  getter access_groups_endpoint : String = "/access_groups"
-  getter access_zones_endpoint : String = "/access_zones"
-  getter alarm_zones_endpoint : String = "/alarm_zones"
-  getter cardholders_endpoint : String = "/cardholders"
-  getter divisions_endpoint : String = "/divisions"
-  getter card_types_endpoint : String = "/card_types"
-  getter events_endpoint : String = "/events"
-  getter pdfs_endpoint : String = "/personal_data_fields"
-  getter doors_endpoint : String = "/doors"
+  getter access_groups_endpoint : String = "/access_groups/"
+  getter access_zones_endpoint : String = "/access_zones/"
+  getter alarm_zones_endpoint : String = "/alarm_zones/"
+  getter cardholders_endpoint : String = "/cardholders/"
+  getter divisions_endpoint : String = "/divisions/"
+  getter card_types_endpoint : String = "/card_types/"
+  getter events_endpoint : String = "/events/"
+  getter pdfs_endpoint : String = "/personal_data_fields/"
+  getter doors_endpoint : String = "/doors/"
 
   @fixed_pdf_id : String = ""
   @default_division : String? = nil
@@ -247,15 +252,24 @@ class Gallagher::AzureAPI < PlaceOS::Driver
     if api_version >= SemanticVersion.parse("8.10.0")
       @card_types_endpoint = get_path payload["features"]["cardTypes"]["assign"]["href"].as_s
       @pdfs_endpoint = get_path payload["features"]["personalDataFields"]["personalDataFields"]["href"].as_s
-      response = get(@pdfs_endpoint, {"name" => @unique_pdf_name}, @headers)
+      lookup_pdf_id
     else
       @card_types_endpoint = get_path payload["features"]["cardTypes"]["cardTypes"]["href"].as_s
       @pdfs_endpoint = get_path payload["features"]["items"]["items"]["href"].as_s
-      response = get(@pdfs_endpoint, {
-        "name" => @unique_pdf_name,
-        "type" => "33",
-      }, @headers)
+      lookup_pdf_id("33")
     end
+  end
+
+  protected def lookup_pdf_id(pdf_type = nil)
+    if fixed_id = setting?(String, :fixed_pdf_id).presence
+      @fixed_pdf_id = fixed_id
+      return
+    end
+
+    response = get(@pdfs_endpoint, {
+      "name" => @unique_pdf_name,
+      "type" => pdf_type,
+    }.compact, @headers)
 
     if response.success?
       logger.debug { "PDFS request returned:\n#{response.body}" }
@@ -269,7 +283,12 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   protected def get_path(uri : String) : String
-    URI.parse(uri).request_target.not_nil!
+    if (actual_base = @custom_href_base) && uri.starts_with?(actual_base)
+      uri = uri[actual_base.size..-1]
+    end
+    path = URI.parse(uri).request_target.as(String)
+    return path if path.ends_with?('/')
+    "#{path}/"
   end
 
   def get_alarm_zones(name : String? = nil, exact_match : Bool = true)
@@ -315,20 +334,20 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   def get_pdf(user_id : String, pdf_id : String | UInt64)
-    response = get("#{@cardholders_endpoint}/#{user_id}/personal_data/#{pdf_id}", headers: @headers)
+    response = get("#{@cardholders_endpoint}#{user_id}/personal_data/#{pdf_id}/", headers: @headers)
     raise "cardholder PDF request failed with #{response.status_code}\n#{response.body}" unless response.success?
     response.body
   end
 
   def get_base64_pdf(user_id : String, pdf_id : String | UInt64)
-    response = get("#{@cardholders_endpoint}/#{user_id}/personal_data/#{pdf_id}", headers: @headers)
+    response = get("#{@cardholders_endpoint}#{user_id}/personal_data/#{pdf_id}/", headers: @headers)
     raise "cardholder PDF request failed with #{response.status_code}\n#{response.body}" unless response.success?
 
     Base64.strict_encode(response.body)
   end
 
   def get_cardholder(id : String | Int32)
-    response = get("#{@cardholders_endpoint}/#{id}", headers: @headers)
+    response = get("#{@cardholders_endpoint}#{id}/", headers: @headers)
     raise "cardholder request failed with #{response.status_code}\n#{response.body}" unless response.success?
     Cardholder.from_json(response.body)
   end
@@ -353,7 +372,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
 
   def get_card_type(id : String | Int32 | Nil = nil)
     card = id || @default_card_type || raise("no default card type provided")
-    response = get("#{@card_types_endpoint}/#{card}", headers: @headers)
+    response = get("#{@card_types_endpoint}#{card}/", headers: @headers)
     raise "card type request failed with #{response.status_code}\n#{response.body}" unless response.success?
     CardType.from_json(response.body)
   end
@@ -412,7 +431,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
     short_name : String? = nil,
     division_href : String? = nil,
   )
-    url = href ? get_path(href) : "#{@cardholders_endpoint}/#{id.not_nil!}"
+    url = href ? get_path(href) : "#{@cardholders_endpoint}/#{id.not_nil!}/"
 
     if cards || remove_cards || update_cards
       card_updates = {} of String => Array(Card)
@@ -468,7 +487,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   def get_access_group(id : String)
-    response = get("#{@access_groups_endpoint}/#{id}", headers: @headers)
+    response = get("#{@access_groups_endpoint}#{id}/", headers: @headers)
     raise "access group request failed with #{response.status_code}\n#{response.body}" unless response.success?
     AccessGroup.from_json(response.body)
   end
@@ -482,7 +501,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   def get_access_group_members(id : String)
-    response = get("#{@access_groups_endpoint}/#{id}/cardholders", headers: @headers)
+    response = get("#{@access_groups_endpoint}#{id}/cardholders/", headers: @headers)
     raise "access group members request failed with #{response.status_code}\n#{response.body}" unless response.success?
     json = response.body
     begin
@@ -492,7 +511,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
     end
   end
 
-  def access_group_member?(group_id : String | Int32, cardholder_id : String | Int32) : String?
+  def access_group_member?(group_id : String | Int32, cardholder_id : String | Int32, from_unix : Int64? = nil, until_unix : Int64? = nil) : String?
     group_id = group_id.to_s
     details = get_cardholder(cardholder_id).access_groups
     access_groups = case details
@@ -504,17 +523,36 @@ class Gallagher::AzureAPI < PlaceOS::Driver
                       return nil
                     end
 
-    access = access_groups.find do |group|
-      if href = group.access_group[:href]
-        href.ends_with?(group_id)
+    if from_unix || until_unix
+      # check time based access
+      from_time = Time.unix(from_unix) if from_unix
+      until_time = Time.unix(until_unix) if until_unix
+
+      access = access_groups.find do |group|
+        if (href = group.access_group[:href]?) && href.ends_with?(group_id)
+          if from_time && until_time
+            from_time == group.from && until_time == group.until
+          elsif from_time
+            from_time == group.from
+          else
+            until_time == group.until
+          end
+        end
+      end
+    else
+      # check general access
+      access = access_groups.find do |group|
+        if href = group.access_group[:href]?
+          href.ends_with?(group_id) && group.until.nil?
+        end
       end
     end
 
     access.try(&.href)
   end
 
-  def remove_access_group_member(group_id : String | Int32, cardholder_id : String | Int32) : Bool
-    if href = access_group_member?(group_id, cardholder_id)
+  def remove_access_group_member(group_id : String | Int32, cardholder_id : String | Int32, from_unix : Int64? = nil, until_unix : Int64? = nil) : Bool
+    if href = access_group_member?(group_id, cardholder_id, from_unix, until_unix)
       response = delete(get_path(href), headers: @headers)
       raise "remove access group member request failed with #{response.status_code}\n#{response.body}" unless response.success?
       true
@@ -526,12 +564,16 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   def add_access_group_member(group_id : String | Int32, cardholder_id : String | Int32, from_unix : Int64? = nil, until_unix : Int64? = nil)
     from_time = Time.unix(from_unix) if from_unix
     until_time = Time.unix(until_unix) if until_unix
-    group = CardholderAccessGroup.new({href: "#{@uri_base}#{@access_groups_endpoint}/#{group_id}".as(String?), name: nil.as(String?)})
+    group = CardholderAccessGroup.new(
+      {href: "#{@custom_href_base || @uri_base}#{@access_groups_endpoint}#{group_id}/".as(String?), name: nil.as(String?)},
+      from_time,
+      until_time,
+    )
     update_cardholder(cardholder_id, access_groups: [group])
   end
 
   def get_division(id : String)
-    response = get("#{@divisions_endpoint}/#{id}", headers: @headers)
+    response = get("#{@divisions_endpoint}#{id}/", headers: @headers)
     raise "division request failed with #{response.status_code}\n#{response.body}" unless response.success?
     JSON.parse(response.body)
   end
@@ -555,28 +597,28 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   # forces a zone to be free, that is doors are unlocked
   @[Security(Level::Support)]
   def free_zone(zone_id : String | Int32) : Bool?
-    response = post("#{@access_zones_endpoint}/#{zone_id}/free", headers: @headers)
+    response = post("#{@access_zones_endpoint}#{zone_id}/free/", headers: @headers)
     response.success?
   end
 
   # forces a zone to be secure and require a swipe card to access
   @[Security(Level::Support)]
   def secure_zone(zone_id : String | Int32) : Bool?
-    response = post("#{@access_zones_endpoint}/#{zone_id}/secure", headers: @headers)
+    response = post("#{@access_zones_endpoint}#{zone_id}/secure/", headers: @headers)
     response.success?
   end
 
   # returns the zone to it's default scheduled state, removing any overrides
   @[Security(Level::Support)]
   def reset_zone(zone_id : String | Int32) : Bool?
-    response = post("#{@access_zones_endpoint}/#{zone_id}/cancel", headers: @headers)
+    response = post("#{@access_zones_endpoint}#{zone_id}/cancel/", headers: @headers)
     response.success?
   end
 
   # returns the zone details
   @[Security(Level::Support)]
   def get_access_zone(zone_id : String | Int32) : JSON::Any
-    response = get("#{@access_zones_endpoint}/#{zone_id}", headers: @headers)
+    response = get("#{@access_zones_endpoint}#{zone_id}/", headers: @headers)
     raise "zone request failed with #{response.status_code}\n#{response.body}" unless response.success?
     JSON.parse(response.body)
   end
@@ -589,7 +631,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   def get_event_groups
-    response = get("#{@events_endpoint}/groups", headers: @headers)
+    response = get("#{@events_endpoint}groups/", headers: @headers)
     raise "event groups request failed with #{response.status_code}\n#{response.body}" unless response.success?
     JSON.parse(response.body)
   end
@@ -664,7 +706,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   end
 
   def door(id : String | Int64)
-    response = get("#{@doors_endpoint}/#{id}", headers: @headers)
+    response = get("#{@doors_endpoint}#{id}/", headers: @headers)
     raise "door lookup request failed with #{response.status_code}\n#{response.body}" unless response.success?
     DoorDetails.from_json(response.body)
   end
@@ -701,7 +743,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
 
   @[Security(Level::Support)]
   def unlock(door_id : String) : Bool?
-    response = post("#{@doors_endpoint}/#{door_id}/open", headers: @headers)
+    response = post("#{@doors_endpoint}#{door_id}/open/", headers: @headers)
     response.success?
   end
 
@@ -782,7 +824,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
   # using an email address, lookup the security system id for a user
   @[Security(Level::Support)]
   def card_holder_id_lookup(email : String) : String | Int64 | Nil
-    query_cardholders(email, @unique_pdf_name).first?.try(&.id)
+    query_cardholders(email, @fixed_pdf_id.presence ? nil : @unique_pdf_name).first?.try(&.id)
   end
 
   # given a card holder id, lookup the details of the card holder
@@ -814,8 +856,8 @@ class Gallagher::AzureAPI < PlaceOS::Driver
 
   # return the id that represents the access permission (truthy indicates access)
   @[Security(Level::Support)]
-  def zone_access_member?(zone_id : String | Int64, card_holder_id : String | Int64) : String | Int64 | Nil
-    access_group_member?(zone_id.to_s, card_holder_id.to_s)
+  def zone_access_member?(zone_id : String | Int64, card_holder_id : String | Int64, from_unix : Int64? = nil, until_unix : Int64? = nil) : String | Int64 | Nil
+    access_group_member?(zone_id.to_s, card_holder_id.to_s, from_unix, until_unix)
   end
 
   # add a member to the zone
@@ -826,7 +868,7 @@ class Gallagher::AzureAPI < PlaceOS::Driver
 
   # remove a member from the zone
   @[Security(Level::Support)]
-  def zone_access_remove_member(zone_id : String | Int64, card_holder_id : String | Int64)
-    remove_access_group_member zone_id.to_s, card_holder_id.to_s
+  def zone_access_remove_member(zone_id : String | Int64, card_holder_id : String | Int64, from_unix : Int64? = nil, until_unix : Int64? = nil)
+    remove_access_group_member zone_id.to_s, card_holder_id.to_s, from_unix, until_unix
   end
 end

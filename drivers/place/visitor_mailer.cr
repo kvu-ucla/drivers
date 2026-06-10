@@ -59,6 +59,13 @@ class Place::VisitorMailer < PlaceOS::Driver
     # already triggers the `event` template).
     skip_event_linked_booking_email: true,
 
+    # When true, the host will not receive any visitor-targeted emails
+    # (invites, check-in notifications, booking-changed notifications, etc.)
+    # even if they appear in the attendee / guest list.  Templates that
+    # explicitly target the host (e.g. `notify_original_host_template`) are
+    # unaffected.
+    skip_host_email: true,
+
     domain_uri:      "https://example.com/",
     jwt_private_key: PlaceOS::Model::JWTBase.private_key,
   })
@@ -145,6 +152,7 @@ class Place::VisitorMailer < PlaceOS::Driver
   @network_group_ids = [] of String
   @disable_event_visitors : Bool = true
   @skip_event_linked_booking_email : Bool = true
+  @skip_host_email : Bool = true
 
   @uri : URI = URI.new
   @jwt_private_key : String = PlaceOS::Model::JWTBase.private_key
@@ -159,8 +167,8 @@ class Place::VisitorMailer < PlaceOS::Driver
     @event_template = setting?(String, :event_template) || "event"
     @booking_template = setting?(String, :booking_template) || "booking"
     @notify_checkin_template = setting?(String, :notify_checkin_template) || "notify_checkin"
-    @notify_induction_accepted_template = setting?(String, :induction_accepted) || "induction_accepted"
-    @notify_induction_declined_template = setting?(String, :induction_declined) || "induction_declined"
+    @notify_induction_accepted_template = setting?(String, :notify_induction_accepted_template) || "induction_accepted"
+    @notify_induction_declined_template = setting?(String, :notify_induction_declined_template) || "induction_declined"
     @notify_original_host_template = setting?(String, :notify_original_host_template) || "notify_original_host"
     @booking_changed_template = setting?(String, :booking_changed_template) || "booking_changed"
     @group_event_template = setting?(String, :group_event_template) || "group_event"
@@ -178,6 +186,8 @@ class Place::VisitorMailer < PlaceOS::Driver
     @disable_event_visitors = setting?(Bool, :disable_event_visitors) || false
     skip_event_linked = setting?(Bool, :skip_event_linked_booking_email)
     @skip_event_linked_booking_email = skip_event_linked.nil? ? true : skip_event_linked
+    skip_host_email = setting?(Bool, :skip_host_email)
+    @skip_host_email = skip_host_email.nil? ? true : skip_host_email
     @invite_zone_tag = setting?(String, :invite_zone_tag) || "building"
     @is_parent_zone = setting?(Bool, :is_campus) || false
 
@@ -215,7 +225,7 @@ class Place::VisitorMailer < PlaceOS::Driver
       zone = fetch_zone(zone_id)
       if zone.tags.includes?(@invite_zone_tag)
         @building_zone = zone
-        if @is_parent_zone && (child_zones = Array(ZoneDetails).from_json(staff_api.zones(parent: zone_id).get.to_json))
+        if @is_parent_zone && (child_zones = Array(ZoneDetails).from_json(staff_api.zones(parent: zone_id).get_json))
           @parent_zone_ids = child_zones.map(&.id)
         else
           @parent_zone_ids = [] of String
@@ -233,7 +243,7 @@ class Place::VisitorMailer < PlaceOS::Driver
     if (cached = @zone_cache[zone_id]?) && cached[0] > Time.utc.to_unix
       cached[1]
     else
-      zone = ZoneDetails.from_json staff_api.zone(zone_id).get.to_json
+      zone = ZoneDetails.from_json staff_api.zone(zone_id).get_json
       @zone_cache[zone_id] = {Time.utc.to_unix + @zone_cache_timeout, zone}
       zone
     end
@@ -264,6 +274,12 @@ class Place::VisitorMailer < PlaceOS::Driver
     # don't email staff members
     if !@host_domain_filter.empty? && guest_details.attendee_email.split('@', 2)[1].downcase.in?(@host_domain_filter)
       logger.debug { "ignoring event matches host domain filter" }
+      return
+    end
+
+    # don't send a visitor-targeted email to the host.
+    if @skip_host_email && (host_email = guest_details.host.presence) && guest_details.attendee_email.downcase == host_email.downcase
+      logger.debug { "ignoring guest event as attendee #{guest_details.attendee_email} is the host" }
       return
     end
 
@@ -767,6 +783,9 @@ class Place::VisitorMailer < PlaceOS::Driver
       visitor_email = guest["email"].as_s
       visitor_name = guest["name"].as_s?
 
+      # don't email the host their own booking_changed notification.
+      next if @skip_host_email && visitor_email.downcase == host_email.downcase
+
       # don't email staff members
       next if !@host_domain_filter.empty? && visitor_email.split('@', 2)[1].downcase.in?(@host_domain_filter)
 
@@ -1011,7 +1030,7 @@ class Place::VisitorMailer < PlaceOS::Driver
   end
 
   protected def get_room_details(system_id : String, retries = 0)
-    SystemDetails.from_json staff_api.get_system(system_id).get.to_json
+    SystemDetails.from_json staff_api.get_system(system_id).get_json
   rescue
     raise "issue loading system details #{system_id}" if retries > 3
     sleep 1.second
