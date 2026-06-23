@@ -21,6 +21,7 @@ class Gallagher::RestAPI < PlaceOS::Driver
   default_settings({
     api_key:         "your api key",
     unique_pdf_name: "email",
+    _fixed_pdf_id:   "33694",
 
     # The division to pass when creating cardholders.
     default_division_href: "",
@@ -187,15 +188,24 @@ class Gallagher::RestAPI < PlaceOS::Driver
     if api_version >= SemanticVersion.parse("8.10.0")
       @card_types_endpoint = get_path payload["features"]["cardTypes"]["assign"]["href"].as_s
       @pdfs_endpoint = get_path payload["features"]["personalDataFields"]["personalDataFields"]["href"].as_s
-      response = get(@pdfs_endpoint, {"name" => @unique_pdf_name}, @headers)
+      lookup_pdf_id
     else
       @card_types_endpoint = get_path payload["features"]["cardTypes"]["cardTypes"]["href"].as_s
       @pdfs_endpoint = get_path payload["features"]["items"]["items"]["href"].as_s
-      response = get(@pdfs_endpoint, {
-        "name" => @unique_pdf_name,
-        "type" => "33",
-      }, @headers)
+      lookup_pdf_id("33")
     end
+  end
+
+  protected def lookup_pdf_id(pdf_type = nil)
+    if fixed_id = setting?(String, :fixed_pdf_id).presence
+      @fixed_pdf_id = fixed_id
+      return
+    end
+
+    response = get(@pdfs_endpoint, {
+      "name" => @unique_pdf_name,
+      "type" => pdf_type,
+    }.compact, @headers)
 
     if response.success?
       logger.debug { "PDFS request returned:\n#{response.body}" }
@@ -432,7 +442,7 @@ class Gallagher::RestAPI < PlaceOS::Driver
     end
   end
 
-  def access_group_member?(group_id : String | Int32, cardholder_id : String | Int32) : String?
+  def access_group_member?(group_id : String | Int32, cardholder_id : String | Int32, from_unix : Int64? = nil, until_unix : Int64? = nil) : String?
     group_id = group_id.to_s
     details = get_cardholder(cardholder_id).access_groups
     access_groups = case details
@@ -444,17 +454,36 @@ class Gallagher::RestAPI < PlaceOS::Driver
                       return nil
                     end
 
-    access = access_groups.find do |group|
-      if href = group.access_group[:href]
-        href.ends_with?(group_id)
+    if from_unix || until_unix
+      # check time based access
+      from_time = Time.unix(from_unix) if from_unix
+      until_time = Time.unix(until_unix) if until_unix
+
+      access = access_groups.find do |group|
+        if (href = group.access_group[:href]?) && href.ends_with?(group_id)
+          if from_time && until_time
+            from_time == group.from && until_time == group.until
+          elsif from_time
+            from_time == group.from
+          else
+            until_time == group.until
+          end
+        end
+      end
+    else
+      # check general access
+      access = access_groups.find do |group|
+        if href = group.access_group[:href]?
+          href.ends_with?(group_id) && group.until.nil?
+        end
       end
     end
 
     access.try(&.href)
   end
 
-  def remove_access_group_member(group_id : String | Int32, cardholder_id : String | Int32) : Bool
-    if href = access_group_member?(group_id, cardholder_id)
+  def remove_access_group_member(group_id : String | Int32, cardholder_id : String | Int32, from_unix : Int64? = nil, until_unix : Int64? = nil) : Bool
+    if href = access_group_member?(group_id, cardholder_id, from_unix, until_unix)
       response = delete(get_path(href), headers: @headers)
       raise "remove access group member request failed with #{response.status_code}\n#{response.body}" unless response.success?
       true
@@ -466,7 +495,7 @@ class Gallagher::RestAPI < PlaceOS::Driver
   def add_access_group_member(group_id : String | Int32, cardholder_id : String | Int32, from_unix : Int64? = nil, until_unix : Int64? = nil)
     from_time = Time.unix(from_unix) if from_unix
     until_time = Time.unix(until_unix) if until_unix
-    group = CardholderAccessGroup.new({href: "#{@uri_base}#{@access_groups_endpoint}/#{group_id}".as(String?), name: nil.as(String?)})
+    group = CardholderAccessGroup.new({href: "#{@uri_base}#{@access_groups_endpoint}/#{group_id}".as(String?), name: nil.as(String?)}, from_time, until_time)
     update_cardholder(cardholder_id, access_groups: [group])
   end
 
@@ -754,8 +783,8 @@ class Gallagher::RestAPI < PlaceOS::Driver
 
   # return the id that represents the access permission (truthy indicates access)
   @[Security(Level::Support)]
-  def zone_access_member?(zone_id : String | Int64, card_holder_id : String | Int64) : String | Int64 | Nil
-    access_group_member?(zone_id.to_s, card_holder_id.to_s)
+  def zone_access_member?(zone_id : String | Int64, card_holder_id : String | Int64, from_unix : Int64? = nil, until_unix : Int64? = nil) : String | Int64 | Nil
+    access_group_member?(zone_id.to_s, card_holder_id.to_s, from_unix, until_unix)
   end
 
   # add a member to the zone
@@ -766,7 +795,7 @@ class Gallagher::RestAPI < PlaceOS::Driver
 
   # remove a member from the zone
   @[Security(Level::Support)]
-  def zone_access_remove_member(zone_id : String | Int64, card_holder_id : String | Int64)
-    remove_access_group_member zone_id.to_s, card_holder_id.to_s
+  def zone_access_remove_member(zone_id : String | Int64, card_holder_id : String | Int64, from_unix : Int64? = nil, until_unix : Int64? = nil)
+    remove_access_group_member zone_id.to_s, card_holder_id.to_s, from_unix, until_unix
   end
 end

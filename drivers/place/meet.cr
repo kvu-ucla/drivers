@@ -23,6 +23,84 @@ class Place::Meet < PlaceOS::Driver
     and integrations found within common workplace collaboration spaces
     DESC
 
+  default_settings({
+    help: {
+      "help-id" => {
+        "title"   => "Video Conferencing",
+        "content" => "markdown",
+      },
+    },
+    tabs: [
+      {
+        name:          "VC",
+        icon:          "conference",
+        inputs:        ["VidConf_1"],
+        help:          "help-id",
+        controls:      "vidconf-controls",
+        merge_on_join: false,
+      },
+    ],
+
+    # if we want to display the selected tab on displays meant only for the presenter
+    preview_outputs:        ["Display_2"],
+    vc_camera_in:           "switch_camera_output_id",
+    join_lockout_secondary: true,
+    unjoin_on_shutdown:     false,
+    mute_on_unlink:         true,
+    auto_route_on_join:     false,
+
+    # only required in joining rooms
+    local_outputs: ["Display_1"],
+    local_cameras: ["Camera_1"],
+
+    screens: {
+      "Projector_1" => "Screen_1",
+    },
+
+    # change to false if there is a joining flag
+    lighting_independent: true,
+    lighting_area:        {
+      # see interface/lighting for options
+      id:   34,
+      join: 0x01,
+    },
+    lighting_scenes: [
+      {
+        name:    "Full",
+        id:      1,
+        icon:    "lightbulb",
+        opacity: 1.0,
+      },
+      {
+        name:    "Medium",
+        id:      2,
+        icon:    "lightbulb",
+        opacity: 0.5,
+      },
+      {
+        name:    "Off",
+        id:      3,
+        icon:    "lightbulb_outline",
+        opacity: 0.8,
+      },
+    ],
+    lighting_levels: [
+      {
+        name: "Spot light left",
+        area: {
+          id: 123,
+        },
+      },
+    ],
+    _channel_details: [
+      {
+        name:    "Al Jazeera",
+        icon:    "https://url-to-svg-or-png",
+        channel: "udp://239.192.10.170:5000?hwchan=0",
+      },
+    ],
+  })
+
   class ChannelDetail
     include JSON::Serializable
 
@@ -79,10 +157,6 @@ class Place::Meet < PlaceOS::Driver
   @unjoin_on_shutdown : Bool? = nil
   @mute_on_unlink : Bool = true
   @auto_route_on_join : Bool = false
-  DEFAULT_DSP_MOD = "Mixer_1"
-  @mixer_module : String = DEFAULT_DSP_MOD
-  @fls_active : Bool = false
-  @ignore_fls_signal : Bool = false
 
   @startup_exec : Array(AccessoryComplex::Exec)? = nil
   @shutdown_exec : Array(AccessoryComplex::Exec)? = nil
@@ -109,9 +183,9 @@ class Place::Meet < PlaceOS::Driver
     @mute_on_unlink = setting?(Bool, :mute_on_unlink) || false
     @auto_route_on_join = setting?(Bool, :auto_route_on_join) || false
 
-    @ignore_fls_signal = setting?(Bool, :ignore_fls_signal) || false
     @startup_exec = setting?(Array(AccessoryComplex::Exec), :startup_exec)
-    @shutdown_exec = setting?(Array(AccessoryComplex::Exec), :shutdown_exec)
+    # shutown_exec was a previous spelling mistake, here for backwards compatibility
+    @shutdown_exec = setting?(Array(AccessoryComplex::Exec), :shutdown_exec) || setting?(Array(AccessoryComplex::Exec), :shutown_exec)
 
     self[:active] = setting?(Bool, :active_state)
 
@@ -127,7 +201,6 @@ class Place::Meet < PlaceOS::Driver
       init_lighting
       init_vidconf
       init_joining
-      init_fls
     end
 
     # initialize all the extentsions
@@ -175,12 +248,6 @@ class Place::Meet < PlaceOS::Driver
   # Sets the overall room power state.
   def power(state : Bool, unlink : Bool = false)
     return if state == status?(Bool, :active)
-
-    if state && @fls_active && !@ignore_fls_signal
-      logger.warn { "Ingoring power on request as fire alarm active" }
-      return
-    end
-
     logger.debug { "Powering #{state ? "up" : "down"}" }
     self[:active] = state
     unlink = @unjoin_on_shutdown.nil? ? unlink : !!@unjoin_on_shutdown
@@ -190,11 +257,11 @@ class Place::Meet < PlaceOS::Driver
 
     if state
       @local_preview_outputs.each { |device| sys[device].power true } # Power on preview displays
-      # apply_master_audio_default
-      # apply_camera_defaults
+      apply_master_audio_default
+      apply_camera_defaults
       # the reason for this as when linking, the current routes are applied to the remote room
       apply_default_routes unless linked?
-      # apply_mic_defaults
+      apply_mic_defaults
 
       if first_output = @tabs.first?.try &.inputs.first
         selected_input first_output
@@ -203,12 +270,12 @@ class Place::Meet < PlaceOS::Driver
       perform_executes(@startup_exec)
     else
       unlink_systems if unlink
-      # audio_mute(true) rescue nil
+      audio_mute(true) rescue nil
 
       @local_outputs.each { |output| unroute(output) }
       @local_preview_outputs.each { |output| unroute(output) }
 
-      # mute_microphones
+      mute_microphones
 
       if devices = @shutdown_devices
         devices.each { |device| sys[device].power false }
@@ -231,7 +298,8 @@ class Place::Meet < PlaceOS::Driver
       end
     {% end %}
 
-    @ignore_update = Time.utc.to_unix
+    # better to not be ignored
+    # @ignore_update = Time.utc.to_unix
     define_setting(:active_state, state)
     state
   end
@@ -264,12 +332,8 @@ class Place::Meet < PlaceOS::Driver
 
   @default_routes : Hash(String, String) = {} of String => String
 
-  #routes for toggling participants on zoom room 
-  @participant_routes : Hash(String, String) = {} of String => String
-
   protected def init_signal_routing
     @default_routes = setting?(Hash(String, String), :default_routes) || {} of String => String
-    @participant_routes = setting?(Hash(String, String), :participant_routes) || {} of String => String
 
     logger.debug { "loading signal graph..." }
     load_siggraph
@@ -298,12 +362,6 @@ class Place::Meet < PlaceOS::Driver
     @default_routes.each { |output, input| route_signal(input, output) }
   rescue error
     logger.warn(exception: error) { "error applying default routes" }
-  end
-
-  def apply_participant_routes
-    @participant_routes.each { |output, input| route_signal(input, output) }
-  rescue error
-    logger.warn(exception: error) { "error applying participant routes" }
   end
 
   @[Description("available inputs and outputs. Route using id keys")]
@@ -450,7 +508,7 @@ class Place::Meet < PlaceOS::Driver
 
     # merge in joined room help
     remote_rooms.each do |room|
-      help.merge! Help.from_json(room.local_help.get.to_json)
+      help.merge! Help.from_json(room.local_help.get_json)
     end
 
     self[:help] = help
@@ -463,7 +521,7 @@ class Place::Meet < PlaceOS::Driver
 
     # merge in joined room tabs
     remote_rooms.each do |room|
-      remote_tabs = Array(Tab).from_json(room.local_tabs.get.to_json)
+      remote_tabs = Array(Tab).from_json(room.local_tabs.get_json)
       remote_tabs.each do |remote_tab|
         next if remote_tab.merge_on_join == false
 
@@ -564,7 +622,7 @@ class Place::Meet < PlaceOS::Driver
 
     getter name : String? = nil
     property level_id : String | Array(String)? = nil
-    getter mute_id : String | Array(String)? { level_id }
+    property mute_id : String | Array(String)? { level_id }
 
     getter default_muted : Bool? = nil
     getter default_level : Float64? = nil
@@ -829,7 +887,7 @@ class Place::Meet < PlaceOS::Driver
         # merge in joined room mics
         remote_rooms.each do |room|
           begin
-            remote_area = LightingArea.from_json(room.local_lighting_area.get.to_json)
+            remote_area = LightingArea.from_json(room.local_lighting_area.get_json)
             light_area = light_area.join_with(remote_area)
           rescue error
             logger.warn(exception: error) { "ignoring lighting config in room #{room.name} (#{room.id})" }
@@ -856,7 +914,7 @@ class Place::Meet < PlaceOS::Driver
     # merge all the faders onto the joined touch panels
     levels = @local_light_levels.try(&.dup) || [] of LightingLevel
     remote_systems.each do |remote|
-      if remote_levels = Array(LightingLevel)?.from_json(remote.room_logic.local_light_levels.get.to_json)
+      if remote_levels = Array(LightingLevel)?.from_json(remote.room_logic.local_light_levels.get_json)
         levels.concat(remote_levels)
       end
     end
@@ -967,7 +1025,7 @@ class Place::Meet < PlaceOS::Driver
   protected def update_available_accessories
     accessories = @local_accessories.dup
     remote_systems.each do |remote|
-      remote_accessories = Array(Accessory).from_json(remote.room_logic.local_accessories.get.to_json)
+      remote_accessories = Array(Accessory).from_json(remote.room_logic.local_accessories.get_json)
       accessories.concat(remote_accessories.map! { |acc|
         acc.remote = remote.system_id
         acc
@@ -1024,11 +1082,28 @@ class Place::Meet < PlaceOS::Driver
 
     # merge in joined room mics
     remote_rooms.each do |room|
-      local.concat Array(Microphone).from_json(room.local_mics.get.to_json)
+      local.concat Array(Microphone).from_json(room.local_mics.get_json)
+    end
+
+    # mics sharing a name represent the same mic exposed by multiple rooms
+    # combine them into a single entry with the level and mute ids merged
+    merged = [] of Microphone
+    local.each do |mic|
+      index = mic.name.try { |name| merged.index { |existing| existing.name == name } }
+      if index
+        # work on a copy so the local room config is not modified
+        existing = merged[index].dup
+        mute_ids = (fader_ids(existing.mute_id) + fader_ids(mic.mute_id)).uniq
+        existing.level_id = (fader_ids(existing.level_id) + fader_ids(mic.level_id)).uniq
+        existing.mute_id = mute_ids
+        merged[index] = existing
+      else
+        merged << mic
+      end
     end
 
     # expose the details to the UI
-    @available_mics = local
+    @available_mics = merged
     self[:microphones] = @available_mics.map do |mic|
       level_id = mic.level_id
       mute_id = mic.mute_id
@@ -1048,6 +1123,14 @@ class Place::Meet < PlaceOS::Driver
         max_level:      mic.max_level,
         rooms:          mic.rooms,
       }
+    end
+  end
+
+  protected def fader_ids(id : String | Array(String)?) : Array(String)
+    case id
+    in String        then [id]
+    in Array(String) then id.dup
+    in Nil           then [] of String
     end
   end
 
@@ -1566,37 +1649,4 @@ class Place::Meet < PlaceOS::Driver
     @remote_systems = nil
     @remote_rooms = nil
   end
-
-  # =========================
-  # FLS Subscription 
-  # =========================  
-
-  protected def init_fls 
-    # Subscribe to Crestron Interface I/O State
-    system.subscribe(:CrestronInterface_1, :state) do |_sub, fls_state|
-      new_state = JSON.parse(fls_state).as_bool? || false
-      logger.debug { "FLS state: #{new_state}" }
-
-      @fls_active = new_state
-
-      if new_state
-        logger.debug { "FLS Active, shutting system shutdown" }
-        set_power_state(false) unless @ignore_fls_signal
-      else
-        logger.debug { "FLS Cleared" }
-      end
-
-      self[:fls_active] = @fls_active
-      self[:fls_ignored] = @ignore_fls_signal
-    end
-
-    # Subscribe to local active state - prevent system from turning on during FLS
-    subscribe(:active) do |_sub, active_state|
-      if @fls_active && JSON.parse(active_state).as_bool?
-        logger.debug { "System attempted to turn on during FLS - forcing off" }
-        set_power_state(false) unless @ignore_fls_signal
-      end
-    end
-  end
-
 end

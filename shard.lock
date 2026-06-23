@@ -63,7 +63,7 @@ shards:
 
   crest:
     git: https://github.com/mamantoha/crest.git
-    version: 1.7.0
+    version: 1.8.0
 
   cron_parser:
     git: https://github.com/kostya/cron_parser.git
@@ -75,7 +75,7 @@ shards:
 
   db:
     git: https://github.com/crystal-lang/crystal-db.git
-    version: 0.13.1
+    version: 0.14.0
 
   debug:
     git: https://github.com/sija/debug.cr.git
@@ -103,7 +103,7 @@ shards:
 
   eventbus:
     git: https://github.com/spider-gazelle/eventbus.git
-    version: 1.0.1+git.commit.a707ac06aba16ba6070ff4972acfd839f1f05e15
+    version: 1.0.2+git.commit.1cec22837b2dfa7110376cff55c14ce57050eb9a
 
   exception_page:
     git: https://github.com/crystal-loot/exception_page.git
@@ -147,7 +147,7 @@ shards:
 
   http_proxy:
     git: https://github.com/mamantoha/http_proxy.git
-    version: 0.14.0
+    version: 0.15.1
 
   inactive-support:
     git: https://github.com/spider-gazelle/inactive-support.git
@@ -191,7 +191,7 @@ shards:
 
   neuroplastic:
     git: https://github.com/spider-gazelle/neuroplastic.git
-    version: 1.14.2
+    version: 1.15.0
 
   ntlm:
     git: https://github.com/spider-gazelle/ntlm.git
@@ -223,7 +223,7 @@ shards:
 
   pg:
     git: https://github.com/will/crystal-pg.git
-    version: 0.29.0
+    version: 0.30.0
 
   pg-orm:
     git: https://github.com/spider-gazelle/pg-orm.git
@@ -251,7 +251,7 @@ shards:
 
   placeos-driver:
     git: https://github.com/placeos/driver.git
-    version: 7.25.0
+    version: 8.0.2
 
   placeos-log-backend:
     git: https://github.com/place-labs/log-backend.git
@@ -259,7 +259,7 @@ shards:
 
   placeos-models:
     git: https://github.com/placeos/models.git
-    version: 9.93.0
+    version: 9.95.0
 
   pool:
     git: https://github.com/ysbaddaden/pool.git
@@ -291,7 +291,7 @@ shards:
 
   redis:
     git: https://github.com/place-labs/crystal-redis.git
-    version: 2.9.1+git.commit.95ec396dd6fdd772d2cbe0bb14ede7e96e6270df
+    version: 2.9.2+git.commit.bdf446711222baa17ee60d40d915b626c1cb11f9
 
   redis-cluster:
     git: https://github.com/place-labs/redis-cluster.cr.git
@@ -335,7 +335,7 @@ shards:
 
   ssh2:
     git: https://github.com/spider-gazelle/ssh2.cr.git
-    version: 1.7.2
+    version: 1.7.3
 
   stomp:
     git: https://github.com/spider-gazelle/stomp.git
