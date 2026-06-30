@@ -979,3 +979,234 @@ DriverSpecs.mock_driver "Meta::Instagram" do
   error_info = status[:poll_error].as_h
   error_info["code"].as_i.should eq 429
 end
+
+# ==========================================================================
+# Test: Media type filtering - "all" (default)
+# ==========================================================================
+DriverSpecs.mock_driver "Meta::Instagram" do
+  settings({
+    access_token:          "test_token",
+    token_expires_at:      Time.utc.to_unix + 50.days.total_seconds.to_i64,
+    poll_interval_minutes: 30,
+    api_version:           "v25.0",
+    media_limit:           25,
+    media_types:           "all",
+  })
+
+  # Handle initial feed fetch
+  expect_http_request do |request, response|
+    response.status_code = 200
+    response << %({"data": []})
+  end
+
+  sleep 100.milliseconds
+
+  retval = exec(:fetch_feed)
+
+  expect_http_request do |request, response|
+    response.status_code = 200
+    response << %({
+      "data": [
+        {
+          "id": "img_001",
+          "media_type": "IMAGE",
+          "media_url": "https://scontent.cdninstagram.com/img.jpg",
+          "caption": "Image post",
+          "permalink": "https://instagram.com/p/img001",
+          "username": "testuser",
+          "timestamp": "2024-01-15T10:30:00+0000"
+        },
+        {
+          "id": "vid_001",
+          "media_type": "VIDEO",
+          "media_url": "https://scontent.cdninstagram.com/vid.mp4",
+          "thumbnail_url": "https://scontent.cdninstagram.com/thumb.jpg",
+          "caption": "Video post",
+          "permalink": "https://instagram.com/p/vid001",
+          "username": "testuser",
+          "timestamp": "2024-01-14T10:30:00+0000"
+        },
+        {
+          "id": "car_001",
+          "media_type": "CAROUSEL_ALBUM",
+          "caption": "Carousel post",
+          "permalink": "https://instagram.com/p/car001",
+          "username": "testuser",
+          "timestamp": "2024-01-13T08:00:00+0000",
+          "children": {
+            "data": [
+              {
+                "id": "car_001_child_1",
+                "media_type": "IMAGE",
+                "media_url": "https://scontent.cdninstagram.com/carousel1.jpg"
+              }
+            ]
+          }
+        }
+      ]
+    })
+  end
+
+  sleep 100.milliseconds
+
+  # Should include all media types
+  slides = status[:slides].as_a
+  slides.size.should eq 3
+  slides[0].as_h["type"].should eq "image"
+  slides[1].as_h["type"].should eq "video"
+  slides[2].as_h["type"].should eq "carousel"
+end
+
+# ==========================================================================
+# Test: Media type filtering - "image" only
+# ==========================================================================
+DriverSpecs.mock_driver "Meta::Instagram" do
+  settings({
+    access_token:          "test_token",
+    token_expires_at:      Time.utc.to_unix + 50.days.total_seconds.to_i64,
+    poll_interval_minutes: 30,
+    api_version:           "v25.0",
+    media_limit:           25,
+    media_types:           "image",
+  })
+
+  # Handle initial feed fetch
+  expect_http_request do |request, response|
+    response.status_code = 200
+    response << %({"data": []})
+  end
+
+  sleep 100.milliseconds
+
+  retval = exec(:fetch_feed)
+
+  expect_http_request do |request, response|
+    response.status_code = 200
+    response << %({
+      "data": [
+        {
+          "id": "img_001",
+          "media_type": "IMAGE",
+          "media_url": "https://scontent.cdninstagram.com/img.jpg",
+          "caption": "Image post",
+          "permalink": "https://instagram.com/p/img001",
+          "username": "testuser",
+          "timestamp": "2024-01-15T10:30:00+0000"
+        },
+        {
+          "id": "vid_001",
+          "media_type": "VIDEO",
+          "media_url": "https://scontent.cdninstagram.com/vid.mp4",
+          "thumbnail_url": "https://scontent.cdninstagram.com/thumb.jpg",
+          "caption": "Video post",
+          "permalink": "https://instagram.com/p/vid001",
+          "username": "testuser",
+          "timestamp": "2024-01-14T10:30:00+0000"
+        },
+        {
+          "id": "car_001",
+          "media_type": "CAROUSEL_ALBUM",
+          "caption": "Carousel post",
+          "permalink": "https://instagram.com/p/car001",
+          "username": "testuser",
+          "timestamp": "2024-01-13T08:00:00+0000",
+          "children": {
+            "data": [
+              {
+                "id": "car_001_child_1",
+                "media_type": "IMAGE",
+                "media_url": "https://scontent.cdninstagram.com/carousel1.jpg"
+              }
+            ]
+          }
+        }
+      ]
+    })
+  end
+
+  sleep 100.milliseconds
+
+  # Should include only IMAGE and CAROUSEL_ALBUM, exclude VIDEO
+  slides = status[:slides].as_a
+  slides.size.should eq 2
+  slides[0].as_h["type"].should eq "image"
+  slides[0].as_h["id"].should eq "img_001"
+  slides[1].as_h["type"].should eq "carousel"
+  slides[1].as_h["id"].should eq "car_001"
+end
+
+# ==========================================================================
+# Test: Media type filtering - "video" only
+# ==========================================================================
+DriverSpecs.mock_driver "Meta::Instagram" do
+  settings({
+    access_token:          "test_token",
+    token_expires_at:      Time.utc.to_unix + 50.days.total_seconds.to_i64,
+    poll_interval_minutes: 30,
+    api_version:           "v25.0",
+    media_limit:           25,
+    media_types:           "video",
+  })
+
+  # Handle initial feed fetch
+  expect_http_request do |request, response|
+    response.status_code = 200
+    response << %({"data": []})
+  end
+
+  sleep 100.milliseconds
+
+  retval = exec(:fetch_feed)
+
+  expect_http_request do |request, response|
+    response.status_code = 200
+    response << %({
+      "data": [
+        {
+          "id": "img_001",
+          "media_type": "IMAGE",
+          "media_url": "https://scontent.cdninstagram.com/img.jpg",
+          "caption": "Image post",
+          "permalink": "https://instagram.com/p/img001",
+          "username": "testuser",
+          "timestamp": "2024-01-15T10:30:00+0000"
+        },
+        {
+          "id": "vid_001",
+          "media_type": "VIDEO",
+          "media_url": "https://scontent.cdninstagram.com/vid.mp4",
+          "thumbnail_url": "https://scontent.cdninstagram.com/thumb.jpg",
+          "caption": "Video post",
+          "permalink": "https://instagram.com/p/vid001",
+          "username": "testuser",
+          "timestamp": "2024-01-14T10:30:00+0000"
+        },
+        {
+          "id": "car_001",
+          "media_type": "CAROUSEL_ALBUM",
+          "caption": "Carousel post",
+          "permalink": "https://instagram.com/p/car001",
+          "username": "testuser",
+          "timestamp": "2024-01-13T08:00:00+0000",
+          "children": {
+            "data": [
+              {
+                "id": "car_001_child_1",
+                "media_type": "IMAGE",
+                "media_url": "https://scontent.cdninstagram.com/carousel1.jpg"
+              }
+            ]
+          }
+        }
+      ]
+    })
+  end
+
+  sleep 100.milliseconds
+
+  # Should include only VIDEO, exclude IMAGE and CAROUSEL_ALBUM
+  slides = status[:slides].as_a
+  slides.size.should eq 1
+  slides[0].as_h["type"].should eq "video"
+  slides[0].as_h["id"].should eq "vid_001"
+end

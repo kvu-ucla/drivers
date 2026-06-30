@@ -15,7 +15,8 @@ class Meta::Instagram < PlaceOS::Driver
     token_expires_at:      0_i64, # Epoch seconds, maintained by driver
     poll_interval_minutes: 30,    # Feed poll cadence
     api_version:           "v25.0",
-    media_limit:           25, # Number of posts to fetch
+    media_limit:           25,    # Number of posts to fetch
+    media_types:           "all", # Filter: "all", "image" (includes carousel), or "video"
   })
 
   # State exposed to frontend and monitoring
@@ -24,6 +25,7 @@ class Meta::Instagram < PlaceOS::Driver
   @poll_interval_minutes : Int32 = 30
   @api_version : String = "v25.0"
   @media_limit : Int32 = 25
+  @media_types : String = "all"
 
   def on_load
     on_update
@@ -36,6 +38,7 @@ class Meta::Instagram < PlaceOS::Driver
     @poll_interval_minutes = setting?(Int32, :poll_interval_minutes) || 30
     @api_version = setting?(String, :api_version) || "v25.0"
     @media_limit = setting?(Int32, :media_limit) || 25
+    @media_types = setting?(String, :media_types) || "all"
 
     # Clear existing schedules
     schedule.clear
@@ -122,6 +125,14 @@ class Meta::Instagram < PlaceOS::Driver
     # Filter out posts without valid IDs
     id = item["id"]?.try(&.as_s?)
     return nil unless id && !id.empty?
+
+    # Filter by media type based on settings
+    case @media_types
+    when "image"
+      return nil if media_type == "VIDEO"
+    when "video"
+      return nil unless media_type == "VIDEO"
+    end
 
     base = {
       "id"        => id,
