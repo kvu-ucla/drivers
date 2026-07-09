@@ -1,0 +1,131 @@
+
+Launching spec runner
+Launching driver: /app/bin/drivers/zoom_zrc-a303f45-2e1fe3-1.1.1-ZHJpdmVycy96b29t
+... requesting default settings
+... got default settings: JSON::Any({"poll_interval" => 30, "basic_auth" => {"username" => "", "password" => ""}})
+... starting driver IO services
+... starting module
+... waiting for module
+ignoring command Start in driver-runner server 
+... module connected
+... enabling debugging output
+... starting spec
+... updating settings: {running_specs: true}
+level=DEBUG message=status updated: proxy_in_use = null
+level=DEBUG message=status updated: connected = true
+level=DEBUG message=status updated: proxy_in_use = null
+level=DEBUG message=published: zoom/gateway -> {"online":true}
+-> spec calling: pair_room {"room-1", "ACT-123"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/pair
+-> received HTTP request: POST /api/rooms/room-1/pair
+-> spec calling: get_room_status {"room-1"} (user: )
+level=DEBUG message=http helper requesting: GET /api/rooms/room-1/status
+-> received HTTP request: GET /api/rooms/room-1/status
+level=DEBUG message=status updated: room-1/room_status = {"status":"available"}
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"room_status","value":{"status":"available"}}
+-> spec calling: join_meeting {"room-1", "123456789", "password", false} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/meeting/join
+-> received HTTP request: POST /api/rooms/room-1/meeting/join
+-> ------
+   unhandled error processing request:
+#<HTTP::Request:0xffffa8de6c40 @method="POST", @headers=HTTP::Headers{"Content-Type" => "application/json", "Accept" => "application/json", "Content-Length" => "72", "Host" => "127.0.0.1:36313", "User-Agent" => "Crystal", "Accept-Encoding" => "gzip, deflate"}, @body=#<HTTP::FixedLengthContent:0xffffa8de2930 @encoding=nil, @encoder=nil, @decoder=nil, @sync_close=false, @read_remaining=72, @closed=false, @io=#<TCPSocket:fd 13>, @expects_continue=false, @continue_sent=false>, @version="HTTP/1.1", @cookies=nil, @query_params=nil, @form_params=nil, @uri=#<URI:0xffffa62a9420 @scheme=nil, @host=nil, @port=nil, @path="/api/rooms/room-1/meeting/join", @query=nil, @user=nil, @password=nil, @fragment=nil>, @remote_address=Socket::IPAddress(127.0.0.1:35878), @local_address=Socket::IPAddress(127.0.0.1:36313), @resource="/api/rooms/room-1/meeting/join">
+   request body:
+{"meeting_number":"123456789","password":"password","bring_share":false}
+-> ------
+-> spec calling: start_instant_meeting {"room-1"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/meeting/start_instant
+-> received HTTP request: POST /api/rooms/room-1/meeting/start_instant
+level=DEBUG message=status updated: room-1/meeting_active = true
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"meeting_active","value":true}
+-> spec calling: start_meeting {"room-1", "999888777"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/meeting/start
+-> received HTTP request: POST /api/rooms/room-1/meeting/start
+-> spec calling: mute_audio {"room-1", true} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/audio/mute?mute=true
+-> received HTTP request: POST /api/rooms/room-1/audio/mute
+level=DEBUG message=status updated: room-1/mic_mute = true
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"mic_mute","value":true}
+-> spec calling: mute_audio {"room-2", false} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-2/audio/mute?mute=false
+-> received HTTP request: POST /api/rooms/room-2/audio/mute
+level=DEBUG message=status updated: room-2/mic_mute = false
+level=DEBUG message=published: zoom/room-2/status -> {"room_id":"room-2","key":"mic_mute","value":false}
+-> spec calling: mute_video {"room-1", true} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/video/mute?stop=true
+-> received HTTP request: POST /api/rooms/room-1/video/mute
+level=DEBUG message=status updated: room-1/camera_mute = true
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"camera_mute","value":true}
+-> spec calling: mute_video {"room-1", false} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/video/mute?stop=false
+-> received HTTP request: POST /api/rooms/room-1/video/mute
+level=DEBUG message=status updated: room-1/camera_mute = false
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"camera_mute","value":false}
+-> spec calling: set_speaker_volume {"room-1", 75.0} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/settings/volume/speaker
+-> received HTTP request: POST /api/rooms/room-1/settings/volume/speaker
+level=DEBUG message=status updated: room-1/speaker_volume = 75.0
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"speaker_volume","value":75.0}
+-> spec calling: set_microphone_volume {"room-1", 60.0} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/settings/volume/microphone
+-> received HTTP request: POST /api/rooms/room-1/settings/volume/microphone
+level=DEBUG message=status updated: room-1/microphone_volume = 60.0
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"microphone_volume","value":60.0}
+-> spec calling: start_recording {"room-1"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/recording/cloud/start
+-> received HTTP request: POST /api/rooms/room-1/recording/cloud/start
+level=DEBUG message=status updated: room-1/recording = "started"
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"recording","value":"started"}
+-> spec calling: stop_recording {"room-1"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/recording/cloud/stop
+-> received HTTP request: POST /api/rooms/room-1/recording/cloud/stop
+level=DEBUG message=status updated: room-1/recording = "stopped"
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"recording","value":"stopped"}
+-> spec calling: get_participants {"room-1"} (user: )
+-> received HTTP request: GET /api/rooms/room-1/participants/
+level=DEBUG message=http helper requesting: GET /api/rooms/room-1/participants/
+level=DEBUG message=status updated: room-1/participants = [{"user_id":1,"name":"Alice"}]
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"participants","value":[{"user_id":1,"name":"Alice"}]}
+-> spec calling: wake_up {"room-1"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/pre-meeting/wake-up
+-> received HTTP request: POST /api/rooms/room-1/pre-meeting/wake-up
+-> spec calling: exit_meeting {"room-1"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/meeting/exit
+-> received HTTP request: POST /api/rooms/room-1/meeting/exit
+level=DEBUG message=http helper requesting: GET /api/rooms/room-1/meeting/status
+-> received HTTP request: GET /api/rooms/room-1/meeting/status
+level=DEBUG message=status updated: room-1/meeting_active = false
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"meeting_active","value":false}
+-> spec calling: unpair_room {"room-1"} (user: )
+level=DEBUG message=http helper requesting: POST /api/rooms/room-1/unpair
+-> received HTTP request: POST /api/rooms/room-1/unpair
+level=DEBUG message=status updated: room-1/online = false
+level=DEBUG message=published: zoom/room-1/status -> {"room_id":"room-1","key":"online","value":false}
+... stopping the module
+
+Failures:
+
+  1) should join a meeting with basic auth
+Expected: nil not to be nil (Spec::AssertionFailed)
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+  from ???
+
+
+  # /app/repositories/local/drivers/zoom/zoom_zrc_spec.cr:41
+
+    17 examples, 1 errors
+Failed examples:
+  - /app/repositories/local/drivers/zoom/zoom_zrc_spec.cr:41 # should join a meeting with basic auth
+
+... spec failed
+... terminating driver gracefully
+Driver terminated with: 0
+spec runner exited with 0
