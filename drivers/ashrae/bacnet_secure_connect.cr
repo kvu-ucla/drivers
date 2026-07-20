@@ -6,6 +6,10 @@ require "json"
 # docs: https://bacnet.org/wp-content/uploads/sites/4/2022/08/Add-135-2016bj.pdf
 # https://www.ashrae.org/file%20library/technical%20resources/standards%20and%20guidelines/standards%20addenda/135_2016_bj_20191118.pdfc
 
+# Objects are identified by: device_id, {object_type, instance_id}
+# i.e. device 2634 {"binary_value", 1} (instance ids start at 1)
+# objects then have names and units etc
+
 class Ashrae::BACnetSecureConnect < PlaceOS::Driver
   include Interface::Sensor
 
@@ -463,6 +467,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     client = bacnet_client
     vmac = device.vmac
     objects = @mutex.synchronize { device.objects.dup }
+    time_now = Time.utc.to_unix
 
     synced = 0
     objects.each do |obj|
@@ -470,7 +475,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
 
       name = object_binding(device_id, obj)
       obj.sync_value(client, vmac)
-      self[name] = object_value(obj)
+      self[name] = {obj_id: name, obj_value: object_value(obj), clock: time_now}
       synced += 1
 
       Fiber.yield
@@ -503,8 +508,9 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
 
     queue(name: name, priority: 50) do |task|
       spawn_action(task) do
+        time_now = Time.utc.to_unix
         obj.sync_value(bacnet_client, device.vmac)
-        self[name] = object_value(obj)
+        self[name] = {obj_id: name, obj_value: object_value(obj), clock: time_now}
       end
     end
   end
@@ -514,7 +520,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     device.objects.find { |obj| obj.object_ptr.object_type == object_type && obj.object_ptr.instance_number == instance_id }.not_nil!
   end
 
-  def write_real(device_id : UInt32, instance_id : UInt32, value : Float32, object_type : ObjectType = ObjectType::AnalogValue)
+  def write_real(device_id : UInt32, instance_id : UInt32, value : Float32, object_type : ObjectType = ObjectType::AnalogValue, priority : Int32? = nil)
     device = get_device(device_id).not_nil!
 
     queue(priority: 99) do |task|
@@ -523,6 +529,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
           ::BACnet::ObjectIdentifier.new(object_type, instance_id),
           ::BACnet::PropertyIdentifier::PropertyType::PresentValue,
           ::BACnet::Object.new.set_value(value),
+          priority: priority,
           link_address: device.vmac,
         ).get
       end
@@ -530,7 +537,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     value
   end
 
-  def write_double(device_id : UInt32, instance_id : UInt32, value : Float64, object_type : ObjectType = ObjectType::LargeAnalogValue)
+  def write_double(device_id : UInt32, instance_id : UInt32, value : Float64, object_type : ObjectType = ObjectType::LargeAnalogValue, priority : Int32? = nil)
     device = get_device(device_id).not_nil!
 
     queue(priority: 99) do |task|
@@ -539,6 +546,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
           ::BACnet::ObjectIdentifier.new(object_type, instance_id),
           ::BACnet::PropertyIdentifier::PropertyType::PresentValue,
           ::BACnet::Object.new.set_value(value),
+          priority: priority,
           link_address: device.vmac,
         ).get
       end
@@ -546,7 +554,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     value
   end
 
-  def write_unsigned_int(device_id : UInt32, instance_id : UInt32, value : UInt64, object_type : ObjectType = ObjectType::PositiveIntegerValue)
+  def write_unsigned_int(device_id : UInt32, instance_id : UInt32, value : UInt64, object_type : ObjectType = ObjectType::PositiveIntegerValue, priority : Int32? = nil)
     device = get_device(device_id).not_nil!
 
     queue(priority: 99) do |task|
@@ -555,6 +563,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
           ::BACnet::ObjectIdentifier.new(object_type, instance_id),
           ::BACnet::PropertyIdentifier::PropertyType::PresentValue,
           ::BACnet::Object.new.set_value(value),
+          priority: priority,
           link_address: device.vmac,
         ).get
       end
@@ -562,7 +571,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     value
   end
 
-  def write_signed_int(device_id : UInt32, instance_id : UInt32, value : Int64, object_type : ObjectType = ObjectType::IntegerValue)
+  def write_signed_int(device_id : UInt32, instance_id : UInt32, value : Int64, object_type : ObjectType = ObjectType::IntegerValue, priority : Int32? = nil)
     device = get_device(device_id).not_nil!
 
     queue(priority: 99) do |task|
@@ -571,6 +580,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
           ::BACnet::ObjectIdentifier.new(object_type, instance_id),
           ::BACnet::PropertyIdentifier::PropertyType::PresentValue,
           ::BACnet::Object.new.set_value(value),
+          priority: priority,
           link_address: device.vmac,
         ).get
       end
@@ -578,7 +588,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     value
   end
 
-  def write_string(device_id : UInt32, instance_id : UInt32, value : String, object_type : ObjectType = ObjectType::CharacterStringValue)
+  def write_string(device_id : UInt32, instance_id : UInt32, value : String, object_type : ObjectType = ObjectType::CharacterStringValue, priority : Int32? = nil)
     device = get_device(device_id).not_nil!
 
     queue(priority: 99) do |task|
@@ -587,6 +597,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
           ::BACnet::ObjectIdentifier.new(object_type, instance_id),
           ::BACnet::PropertyIdentifier::PropertyType::PresentValue,
           ::BACnet::Object.new.set_value(value),
+          priority: priority,
           link_address: device.vmac,
         ).get
       end
@@ -594,7 +605,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     value
   end
 
-  def write_binary(device_id : UInt32, instance_id : UInt32, value : Bool, object_type : ObjectType = ObjectType::BinaryValue)
+  def write_binary(device_id : UInt32, instance_id : UInt32, value : Bool, object_type : ObjectType = ObjectType::BinaryValue, priority : Int32? = nil)
     val = value ? 1 : 0
     device = get_device(device_id).not_nil!
     val = ::BACnet::Object.new.set_value(val)
@@ -606,6 +617,7 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
           ::BACnet::ObjectIdentifier.new(object_type, instance_id),
           ::BACnet::PropertyIdentifier::PropertyType::PresentValue,
           val,
+          priority: priority,
           link_address: device.vmac,
         ).get
       end
@@ -618,9 +630,13 @@ class Ashrae::BACnetSecureConnect < PlaceOS::Driver
     logger.debug { device.inspect } if @verbose_debug
 
     @mutex.synchronize { @devices[device.device_instance] = device }
+    time_now = Time.utc.to_unix
 
     device_id = device.device_instance
-    device.objects.each { |obj| self[object_binding(device_id, obj)] = object_value(obj) }
+    device.objects.each do |obj|
+      name = object_binding(device_id, obj)
+      self[name] = {obj_id: name, obj_value: object_value(obj), clock: time_now}
+    end
   end
 
   protected def object_binding(device_id, obj)

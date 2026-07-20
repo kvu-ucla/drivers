@@ -15,13 +15,27 @@ class Place::Workplace < PlaceOS::Driver
   default_settings({
     # fallback if there isn't one on the zone
     time_zone: "Australia/Sydney",
+
+    # how many days into the future a booking may be made (inclusive)
+    max_booking_days: 14,
+
+    # default desk booking window, local time (24 hour clock)
+    booking_start_hour: 8,
+    booking_end_hour:   20,
   })
 
   @fallback_timezone : Time::Location = Time::Location::UTC
+  @max_booking_days : Int32 = 14
+  @booking_start_hour : Int32 = 8
+  @booking_end_hour : Int32 = 20
 
   def on_update
     timezone = config.control_system.not_nil!.timezone.presence || setting?(String, :time_zone).presence || "Australia/Sydney"
     @fallback_timezone = Time::Location.load(timezone)
+
+    @max_booking_days = setting?(Int32, :max_booking_days) || 14
+    @booking_start_hour = setting?(Int32, :booking_start_hour) || 8
+    @booking_end_hour = setting?(Int32, :booking_end_hour) || 20
   end
 
   # =========================
@@ -123,7 +137,7 @@ class Place::Workplace < PlaceOS::Driver
     # get the list of desks for the level
     all_desks = staff_api.metadata(level.id, "desks").get.dig?("desks", "details")
     raise "no bookable desks on this level, please try another." unless all_desks
-    desks = Array(Desk).from_json(all_desks.to_json)
+    desks = Array(Desk).from_json(all_desks.to_json).select!(&.bookable)
 
     # calculate the offset time
     if date
@@ -152,14 +166,14 @@ class Place::Workplace < PlaceOS::Driver
       end
     end
 
-    # need to limit the results as the LLM runs out of memory
     logger.debug { "found #{desks.size} available desks" }
-    desks.sample(5)
+    desks
   end
 
-  @[Description("books an asset, such as a desk or car parking space, for the number of days specified, starting on the day offset. For desk bookings use booking_type: desk")]
+  @[Description("books an asset, such as a desk, for the number of days specified, starting on the day offset. For desk bookings use booking_type: desk")]
   def book_relative(booking_type : String, asset_id : String, level_id : String, day_offset : Int32 = 0, number_of_days : Int32 = 1)
     logger.debug { "booking relative #{booking_type}, asset #{asset_id} on level #{level_id}, day offset #{day_offset} for num days #{number_of_days}" }
+    raise "parking bookings are not enabled with A.I. at this time" if booking_type.strip.downcase == "parking"
 
     # ensure the level id exists
     level = levels.find { |l| l.id == level_id }
@@ -171,8 +185,10 @@ class Place::Workplace < PlaceOS::Driver
     now = current_time.at_beginning_of_day
 
     raise "booking in the past is not permitted" unless day_offset > 0 || (day_offset == 0 && current_time.hour < 18)
+    ensure_within_booking_window(day_offset + number_of_days - 1)
 
     # ensure the asset exists if we can check for it
+    desk = nil
     case booking_type
     when "desk"
       all_desks = staff_api.metadata(level.id, "desks").get.dig?("desks", "details")
@@ -180,25 +196,30 @@ class Place::Workplace < PlaceOS::Driver
       desks = Array(Desk).from_json(all_desks.to_json)
       desk = desks.find { |d| d.id == asset_id }
 
-      raise "could not find a desk with id: #{asset_id}" unless desk
+      raise "could not find a desk with id '#{asset_id}', maybe you passed the desk name?" unless desk
     end
+
+    friendly_name = desk.try(&.name) || asset_id
 
     ids = (day_offset...(day_offset + number_of_days)).map do |offset|
       # calculate the offset time
       days = offset.days
-      starting = now + days + 8.hours
-      ending = now.at_end_of_day + days - 4.hours
+      starting = now + days + @booking_start_hour.hours
+      ending = now + days + @booking_end_hour.hours
 
       resp = staff_api.create_booking(
         booking_type: booking_type,
         asset_id: asset_id,
+        asset_name: friendly_name,
         user_id: user_id,
         user_email: me.email,
         user_name: me.name,
-        zones: {level_id, building.id},
+        zones: booking_zones(level_id),
         booking_start: starting.to_unix,
         booking_end: ending.to_unix,
+        description: friendly_name,
         time_zone: timezone.to_s,
+        extension_data: booking_extension_data(asset_id, desk),
         utm_source: "chatgpt"
       )
       resp.get["id"].as_i64
@@ -207,13 +228,14 @@ class Place::Workplace < PlaceOS::Driver
 
     {
       booking_ids: ids,
-      details:     "booking for #{asset_id} created on #{starting.day_of_week}, #{starting.to_s("%F")} for #{number_of_days} #{number_of_days > 1 ? "days" : "day"}",
+      details:     "booking of asset_id '#{asset_id}' with name '#{friendly_name}' created on #{starting.day_of_week}, #{starting.to_s("%F")} for #{number_of_days} #{number_of_days > 1 ? "days" : "day"}",
     }
   end
 
-  @[Description("books an asset, such as a desk or car parking space, for the number of days specified, the start date must be in ISO 8601 format with the correct timezone. For desk bookings use booking_type: desk")]
+  @[Description("books an asset, such as a desk, for the number of days specified, the start date must be in ISO 8601 format with the correct timezone. For desk bookings use booking_type: desk")]
   def book_on(booking_type : String, asset_id : String, level_id : String, date : Time, number_of_days : Int32 = 1)
     logger.debug { "booking on #{booking_type}, asset #{asset_id} on level #{level_id}, date #{date} for num days #{number_of_days}" }
+    raise "parking bookings are not enabled with A.I. at this time" if booking_type.strip.downcase == "parking"
 
     # ensure the level id exists
     level = levels.find { |l| l.id == level_id }
@@ -225,7 +247,12 @@ class Place::Workplace < PlaceOS::Driver
     current_time = Time.local(timezone)
     raise "booking in the past is not permitted" unless current_time < now || (current_time - now) < 18.hours
 
+    # days between today and the last day being booked
+    days_ahead = (now - current_time.at_beginning_of_day).total_days.round_away.to_i
+    ensure_within_booking_window(days_ahead + number_of_days - 1)
+
     # ensure the asset exists if we can check for it
+    desk = nil
     case booking_type
     when "desk"
       all_desks = staff_api.metadata(level.id, "desks").get.dig?("desks", "details")
@@ -233,25 +260,30 @@ class Place::Workplace < PlaceOS::Driver
       desks = Array(Desk).from_json(all_desks.to_json)
       desk = desks.find { |d| d.id == asset_id }
 
-      raise "could not find a desk with id: #{asset_id}" unless desk
+      raise "could not find a desk with id '#{asset_id}', maybe you passed the desk name?" unless desk
     end
+
+    friendly_name = desk.try(&.name) || asset_id
 
     ids = (0...number_of_days).map do |offset|
       # calculate the offset time
       days = offset.days
-      starting = now + days + 8.hours
-      ending = now.at_end_of_day + days - 4.hours
+      starting = now + days + @booking_start_hour.hours
+      ending = now + days + @booking_end_hour.hours
 
       resp = staff_api.create_booking(
         booking_type: booking_type,
         asset_id: asset_id,
+        asset_name: friendly_name,
         user_id: user_id,
         user_email: me.email,
         user_name: me.name,
-        zones: {level_id, building.id},
+        zones: booking_zones(level_id),
         booking_start: starting.to_unix,
         booking_end: ending.to_unix,
+        description: friendly_name,
         time_zone: timezone.to_s,
+        extension_data: booking_extension_data(asset_id, desk),
         utm_source: "chatgpt"
       )
       resp.get["id"].as_i64
@@ -259,7 +291,7 @@ class Place::Workplace < PlaceOS::Driver
 
     {
       booking_ids: ids,
-      details:     "booking for #{asset_id} created on #{now.day_of_week}, #{now.to_s("%F")} for #{number_of_days} #{number_of_days > 1 ? "days" : "day"}",
+      details:     "booking of asset_id '#{asset_id}' with name '#{friendly_name}' created on #{now.day_of_week}, #{now.to_s("%F")} for #{number_of_days} #{number_of_days > 1 ? "days" : "day"}",
     }
   end
 
@@ -340,8 +372,11 @@ class Place::Workplace < PlaceOS::Driver
     include JSON::Serializable
 
     getter id : String
+    getter name : String { id }
+    getter bookable : Bool { true }
     getter groups : Array(String) = [] of String
     getter features : Array(String) = [] of String
+    getter map_id : String? = nil
   end
 
   protected def to_friendly_system(system : JSON::Any) : System?
@@ -441,6 +476,48 @@ class Place::Workplace < PlaceOS::Driver
     end
   end
 
+  # raises if the furthest day being booked is beyond the configured window.
+  # `offset` is the number of days past today of the last booking requested.
+  protected def ensure_within_booking_window(offset : Int32)
+    return if offset <= @max_booking_days
+    raise "bookings cannot be made more than #{@max_booking_days} days in advance"
+  end
+
+  # the zones a booking is tagged with, mirroring the hierarchy the mobile app
+  # submits: [org, region?, building, level]
+  protected def booking_zones(level_id : String) : Array(String)
+    building_zone_chain.dup << level_id
+  end
+
+  # the building's ancestor zones (region, org, ...) plus the building itself,
+  # ordered top-most first. Cached as the parent chain rarely changes.
+  getter building_zone_chain : Array(String) do
+    chain = [building.id]
+    parent_id = building.parent_id
+    # walk up the tree, guarding against unexpectedly deep trees / cycles
+    10.times do
+      break unless parent_id
+      parent = Zone.from_json(staff_api.zone(parent_id).get_json)
+      chain.unshift parent.id
+      parent_id = parent.parent_id
+    end
+    chain
+  end
+
+  # extension data mirroring the mobile app booking form so LLM bookings render
+  # identically (map placement etc.) in the workplace apps. Returned as a named
+  # tuple - it's serialized to JSON on the way to the staff API.
+  protected def booking_extension_data(asset_id : String, desk : Desk?)
+    asset_name = desk.try(&.name) || asset_id
+    {
+      assigned_asset_id:   asset_id,
+      assigned_asset_name: asset_name,
+      name:                asset_name,
+      map_id:              desk.try(&.map_id) || asset_id,
+      app_name:            "LLM",
+    }
+  end
+
   protected def staff_api
     system["StaffAPI_1"]
   end
@@ -470,6 +547,7 @@ class Place::Workplace < PlaceOS::Driver
     getter name : String
     getter display_name : String?
     getter tags : Array(String)
+    getter parent_id : String? = nil
 
     property bookable_desk_count : Int32? = nil
     property desk_features : Array(String)? = nil

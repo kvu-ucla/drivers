@@ -1,5 +1,6 @@
 require "placeos-driver/spec"
 require "placeos-driver/interface/mailer"
+require "base64"
 require "json"
 
 DriverSpecs.mock_driver "Place::Parking::Approvals" do
@@ -12,18 +13,20 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   })
 
   settings({
-    poll_rate:            999_999,
-    cache_days:           14,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    cache_days:                      14,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "Mezzanine"       => "gallagher-group2",
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
       {id: 4, name: "Max height 1.95m"},
       {id: 5, name: "Max height 2.1m"},
     ],
@@ -146,7 +149,7 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # approval email uses the per-area trigger (Open Basement -> gallagher-group1)
   mailer.last_template.should eq(["parking_request", "approved_gallagher-group1"])
   mailer.last_to.should eq("normal.user@example.com")
-  staff.last_state(1001_i64).should eq("access_granted")
+  staff.last_state(1001_i64).should eq("access_granted_emailed")
 
   # ===========================================================
   # Test 2: bike booking is allocated to bike space (not car)
@@ -207,7 +210,7 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # smaller-height car_b preferred within the shared carpriority zone
   staff.last_update_for(4001_i64).should eq("asset-car_b")
   gallagher.access_for("ch-afterhours").should contain("gallagher-group1")
-  staff.last_state(4001_i64).should eq("access_granted")
+  staff.last_state(4001_i64).should eq("access_granted_emailed")
 
   # ===========================================================
   # Test 5: priority preemption — higher priority displaces lower priority.
@@ -457,7 +460,7 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   sleep 100.milliseconds
   mailer.send_count.should eq(1)
   mailer.last_template.should eq(["parking_request", "approved_gallagher-group1"])
-  staff.last_state(11001_i64, now + 3600 * 90).should eq("access_granted")
+  staff.last_state(11001_i64, now + 3600 * 90).should eq("access_granted_emailed")
 
   # subsequent sweeps must NOT re-send — the per-instance process_state is
   # reflected on re-fetch and guards the email
@@ -468,8 +471,9 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   mailer.send_count.should eq(1)
 
   # ===========================================================
-  # Test 12: the allocation window ends at the upcoming Friday 23:59 in the
+  # Test 12: the allocation window ends at the upcoming Friday 13:00 in the
   # configured timezone (control_system timezone is Australia/Sydney in specs).
+  # Once Friday 13:00 has passed the window rolls to the following Friday.
   # ===========================================================
 
   staff.reset_calls
@@ -482,15 +486,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   tz = Time::Location.load("Australia/Sydney")
   now_local = Time.local(tz)
   days_until_friday = (Time::DayOfWeek::Friday.value - now_local.day_of_week.value) % 7
-  expected_end = (now_local + days_until_friday.days).at_end_of_day
+  friday_local = now_local + days_until_friday.days
+  expected_end = Time.local(friday_local.year, friday_local.month, friday_local.day, 13, 0, 0, location: tz)
+  expected_end = expected_end.shift(days: 7) if expected_end <= now_local
 
   period_end = staff.last_query_period_end.not_nil!
   period_end.should eq(expected_end.to_unix)
 
   cutoff = Time.unix(period_end).in(tz)
   cutoff.day_of_week.should eq(Time::DayOfWeek::Friday)
-  cutoff.hour.should eq(23)
-  cutoff.minute.should eq(59)
+  cutoff.hour.should eq(13)
+  cutoff.minute.should eq(0)
+  # the window always ends in the future
+  (cutoff > now_local).should eq(true)
 
   # ===========================================================
   # Directory-resolved Gallagher lookups (employeeId via MS Graph).
@@ -516,17 +524,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # enable directory resolution: look users up in the directory and read their
   # "employeeId" from unmapped, then query Gallagher with that value
   settings({
-    poll_rate:            999_999,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "Mezzanine"       => "gallagher-group2",
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
       {id: 4, name: "Max height 1.95m"},
       {id: 5, name: "Max height 2.1m"},
     ],
@@ -770,17 +780,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # ===========================================================
 
   settings({
-    poll_rate:            999_999,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "Mezzanine"       => "gallagher-group2",
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
       {id: 4, name: "Max height 1.95m"},
       {id: 5, name: "Max height 2.1m"},
     ],
@@ -818,17 +830,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # ===========================================================
 
   settings({
-    poll_rate:            999_999,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "Mezzanine"       => "gallagher-group2",
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
       {id: 4, name: "Max height 1.95m"},
       {id: 5, name: "Max height 2.1m"},
     ],
@@ -894,7 +908,7 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
 
   # MID is untouched — keeps the preferred space, never displaced
   staff.last_update_for(80001_i64).should be_nil
-  staff.last_state(80001_i64).should eq("access_granted")
+  staff.last_state(80001_i64).should eq("access_granted_emailed")
   mailer.sent?("mid.user@example.com", "parking_request", "displaced").should eq(false)
 
   # ===========================================================
@@ -903,17 +917,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # ===========================================================
 
   win_settings = {
-    poll_rate:            999_999,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "Mezzanine"       => "gallagher-group2",
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
       {id: 4, name: "Max height 1.95m"},
       {id: 5, name: "Max height 2.1m"},
     ],
@@ -1517,8 +1533,10 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   exec(:process_parking_bookings).get
   sleep 100.milliseconds
 
-  # moved off the now-unmapped asset-temp (notified) and re-allocated to spare
-  mailer.sent?("trans.user@example.com", "parking_request", "displaced").should eq(true)
+  # moved off the now-unmapped asset-temp and re-allocated to spare — because it
+  # landed a new space the same run, the displaced email is suppressed (the
+  # approval email for the new space covers it)
+  mailer.sent?("trans.user@example.com", "parking_request", "displaced").should eq(false)
   staff.last_update_for(36001_i64).should eq("asset-spare")
   staff.approved.includes?(36001_i64).should eq(true)
   # access followed the move: group1 (old spot) removed, group3 (new spot) added
@@ -1673,17 +1691,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # ===========================================================
 
   settings({
-    poll_rate:            999_999,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "VIP Basement"    => "gallagher-group1", # same group as Open Basement
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
     ],
   })
   sleep 100.milliseconds
@@ -1721,17 +1741,19 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # ===========================================================
 
   settings({
-    poll_rate:            999_999,
-    auto_approval_groups: ["group-priority", "group-default"],
-    car_zone_priority:    ["carpriority", "shared"],
-    bike_zone_priority:   ["bikepriority", "shared"],
-    parking_areas:        {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
       "Open Basement"   => "gallagher-group1",
       "Mezzanine"       => "gallagher-group2",
       "Secure Basement" => "gallagher-group3",
     },
     request_space_restrictions: [
       {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
     ],
   })
   sleep 100.milliseconds
@@ -1837,9 +1859,12 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   exec(:process_parking_bookings).get
   sleep 100.milliseconds
 
-  # the overlapping lower-priority occupant was moved off FIRST
+  # the overlapping lower-priority occupant was moved off FIRST (and, with no
+  # space to land, gets the displaced email — with the preemption reason)
   staff.last_update_for(44001_i64).should eq("unallocated-displaced-44001")
   mailer.sent?("normal.user@example.com", "parking_request", "displaced").should eq(true)
+  mailer.arg_for("normal.user@example.com", "parking_request", "displaced", "reason")
+    .should eq("The parking space was reassigned to a higher priority booking.")
   # then the higher-priority booking took the space
   staff.last_update_for(44003_i64).should eq("asset-solo")
   # the non-overlapping Tuesday booking is untouched
@@ -1994,6 +2019,2542 @@ DriverSpecs.mock_driver "Place::Parking::Approvals" do
   # the preemptor is wait-listed
   staff.last_update_for(49003_i64).should be_nil
   staff.last_state(49003_i64).should eq("wait_list")
+
+  # helper to build a recurring booking instance (same id, per-instance window)
+  build_instance = ->(id : Int64, instance : Int64, user : String, starting : Int64, ending : Int64, asset_id : String, approved : Bool) do
+    {
+      id:              id,
+      instance:        instance,
+      booking_type:    "parking",
+      booking_start:   starting,
+      booking_end:     ending,
+      asset_id:        asset_id,
+      asset_ids:       [asset_id],
+      user_id:         "user-#{id}",
+      user_email:      user,
+      user_name:       user,
+      booked_by_email: user,
+      booked_by_name:  user,
+      zones:           ["zone-building"],
+      created:         now - 1000_i64 + id,
+      approved:        approved,
+      rejected:        false,
+      deleted:         false,
+      extension_data:  ext_car,
+    }
+  end
+
+  # ===========================================================
+  # Test 50: a RECURRING booking expands to several instances all holding the
+  # parent's space (different days). A new booking overlapping ANY instance must
+  # be wait-listed — the exact production clash shape.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets(solo_space.to_json)
+
+  staff.set_bookings([
+    build_instance.call(50001_i64, mon_start, "normal.user@example.com",
+      mon_start, mon_end, "asset-solo", true),
+    build_instance.call(50001_i64, tue_start, "normal.user@example.com",
+      tue_start, tue_end, "asset-solo", true),
+    build_booking.call(50002_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-50002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the booking overlapping the Monday instance is wait-listed, not double-booked
+  staff.last_update_for(50002_i64).should be_nil
+  staff.last_state(50002_i64).should eq("wait_list")
+  # the recurring series keeps the space
+  staff.last_update_for(50001_i64).should be_nil
+
+  # ===========================================================
+  # Test 51: recurring instances are allocated INDEPENDENTLY — each day's
+  # instance gets its own per-instance asset update (booking_instances persist
+  # asset overrides), so a series can split across spaces when one space is
+  # busy on one of its days.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  two_spaces = [
+    solo_space[0],
+    {
+      id: "asset-solo2", identifier: "SOLO2",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+  ]
+  staff.set_assets(two_spaces.to_json)
+
+  staff.set_bookings([
+    # asset-solo is taken on Tuesday only
+    build_booking.call(51000_i64, "normal.user@example.com",
+      tue_start, tue_end, "asset-solo", true, ext_car),
+    # recurring series needing Monday AND Tuesday
+    build_instance.call(51001_i64, mon_start, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-51001", false),
+    build_instance.call(51001_i64, tue_start, "clash.user@example.com",
+      tue_start, tue_end, "unallocated-51001", false),
+    # same-priority booking created later, overlapping Tuesday: both spaces are
+    # then busy on Tuesday -> wait list
+    build_booking.call(51002_i64, "normal.user@example.com",
+      tue_start, tue_end, "unallocated-51002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # Monday instance takes the preferred space (free on Monday); the Tuesday
+  # instance splits onto the other space — each via its OWN instance update
+  staff.update_for(51001_i64, mon_start).should eq("asset-solo")
+  staff.update_for(51001_i64, tue_start).should eq("asset-solo2")
+  # approval is persisted per instance too
+  staff.approved_instance?(51001_i64, mon_start).should eq(true)
+  staff.approved_instance?(51001_i64, tue_start).should eq(true)
+
+  # the instances' windows block the later booking from both spaces
+  staff.last_update_for(51002_i64).should be_nil
+  staff.last_state(51002_i64).should eq("wait_list")
+
+  # ===========================================================
+  # Test 52: preemption displaces ONLY the overlapping instance of a recurring
+  # occupant — the other day's instance keeps its space and state.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets(solo_space.to_json)
+
+  staff.set_bookings([
+    build_instance.call(52001_i64, mon_start, "normal.user@example.com",
+      mon_start, mon_end, "asset-solo", true),
+    build_instance.call(52001_i64, tue_start, "normal.user@example.com",
+      tue_start, tue_end, "asset-solo", true),
+    build_booking.call(52002_i64, "priority.user@example.com",
+      tue_start, tue_end, "unallocated-52002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # only the Tuesday instance was displaced, via a per-instance update
+  staff.update_for(52001_i64, tue_start).should eq("unallocated-displaced-52001")
+  staff.update_for(52001_i64, mon_start).should be_nil
+  # Tuesday's process_state reset; Monday keeps its access_granted state
+  staff.last_state(52001_i64, tue_start).should eq("wait_list")
+  staff.last_state(52001_i64, mon_start).should eq("access_granted_emailed")
+  mailer.sent?("normal.user@example.com", "parking_request", "displaced").should eq(true)
+  # the higher-priority booking took the space for Tuesday
+  staff.last_update_for(52002_i64).should eq("asset-solo")
+
+  # ===========================================================
+  # Test 53: allow_displacement: false disables preemption — a higher priority
+  # booking waits for a free space instead of bumping the occupant.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: false,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets(solo_space.to_json)
+
+  staff.set_bookings([
+    build_booking.call(53001_i64, "normal.user@example.com",
+      mon_start, mon_end, "asset-solo", true, ext_car),
+    build_booking.call(53002_i64, "priority.user@example.com",
+      mon_start, mon_end, "unallocated-53002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the occupant keeps the space: no displacement, no displaced email
+  staff.last_update_for(53001_i64).should be_nil
+  mailer.sent?("normal.user@example.com", "parking_request", "displaced").should eq(false)
+  # the higher priority booking is wait-listed instead
+  staff.last_update_for(53002_i64).should be_nil
+  staff.last_state(53002_i64).should eq("wait_list")
+
+  # ===========================================================
+  # Test 54: allow_displacement: false also keeps a booking on a space that has
+  # no gallagher mapping — it is reported but the user is not moved.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  ghost_space = [
+    {
+      id: "asset-ghost", identifier: "GHOST",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      # "Mystery Zone" is not a parking_areas key and there is no
+      # security_system_groups override -> no gallagher group resolvable
+      features: ["Mystery Zone", "carpriority"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+  ]
+  staff.set_assets(ghost_space.to_json)
+
+  staff.set_bookings([
+    build_booking.call(54001_i64, "normal.user@example.com",
+      mon_start, mon_end, "asset-ghost", true, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # reported as misconfigured, but the booking is NOT moved off the space
+  status[:spaces_without_groups].as_a.map { |s| s["id"].as_s }.should contain("asset-ghost")
+  staff.last_update_for(54001_i64).should be_nil
+  mailer.sent?("normal.user@example.com", "parking_request", "displaced").should eq(false)
+
+  # ===========================================================
+  # Test 55: an ACROD request with all ACROD spaces taken falls back to a
+  # regular space instead of being wait-listed.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+      {id: 4, name: "Max height 1.95m"},
+      {id: 5, name: "Max height 2.1m"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  fallback_spaces = [
+    {
+      id: "asset-acrod_x", identifier: "AX",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["ACROD", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+    solo_space[0], # regular: carpriority + Open Basement
+  ]
+  staff.set_assets(fallback_spaces.to_json)
+
+  staff.set_bookings([
+    # the only ACROD space is already taken for the window
+    build_booking.call(55000_i64, "acrod.user@example.com",
+      mon_start, mon_end, "asset-acrod_x", true, ext_acrod),
+    build_booking.call(55001_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-55001", false, ext_acrod),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the restriction is dropped and a regular space provided
+  staff.last_update_for(55001_i64).should eq("asset-solo")
+  staff.approved.includes?(55001_i64).should eq(true)
+  # the existing ACROD allocation is untouched
+  staff.last_update_for(55000_i64).should be_nil
+
+  # ===========================================================
+  # Test 56: an ACROD request when NO ACROD spaces exist at all also falls back
+  # to a regular space.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets(solo_space.to_json) # only the regular space
+
+  staff.set_bookings([
+    build_booking.call(56001_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-56001", false, ext_acrod),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  staff.last_update_for(56001_i64).should eq("asset-solo")
+  staff.last_state(56001_i64).should eq("access_granted_emailed")
+
+  # ===========================================================
+  # Test 57: height requirements NEVER fall back — when the only fitting space
+  # is taken, the booking is wait-listed even though shorter and regular spaces
+  # are free.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  height_fallback_spaces = [
+    {
+      id: "asset-tall210x", identifier: "T210X",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["Max height 2.1m", "carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+    {
+      id: "asset-short195x", identifier: "S195X",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["Max height 1.95m", "carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+    solo_space[0], # regular space with no height indicator
+  ]
+  staff.set_assets(height_fallback_spaces.to_json)
+
+  staff.set_bookings([
+    # the only space fitting a 2.1m vehicle is taken (same priority -> no preempt)
+    build_booking.call(57000_i64, "normal.user@example.com",
+      mon_start, mon_end, "asset-tall210x", true, ext_car),
+    build_booking.call(57001_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-57001", false, ext_h210),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # no fallback to the shorter or regular space — wait-listed
+  staff.last_update_for(57001_i64).should be_nil
+  staff.last_state(57001_i64).should eq("wait_list")
+
+  # ===========================================================
+  # Test 58: a space that looks free to the driver but is booked server-side
+  # (clash / 409) is skipped — the booking lands on the next free space instead
+  # of failing. (Our busy view is zone-scoped + capped, so this can happen.)
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  two_regular = [
+    {
+      id: "asset-r1", identifier: "R1",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+    {
+      id: "asset-r2", identifier: "R2",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+  ]
+  staff.set_assets(two_regular.to_json)
+  # the preferred space is booked outside the driver's view
+  staff.clash_update_for(58001_i64, "asset-r1")
+
+  staff.set_bookings([
+    build_booking.call(58001_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-58001", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # skipped the clashing space, allocated to the next free one
+  staff.last_update_for(58001_i64).should eq("asset-r2")
+  staff.approved.includes?(58001_i64).should eq(true)
+  gallagher.access_for("ch-clash").should contain("gallagher-group1")
+
+  # ===========================================================
+  # Test 59: when the only free space clashes server-side, the booking is
+  # wait-listed (not crashed, no access granted).
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # only asset-r1
+  staff.clash_update_for(59001_i64, "asset-r1")
+
+  staff.set_bookings([
+    build_booking.call(59001_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-59001", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  staff.last_update_for(59001_i64).should be_nil
+  staff.last_state(59001_i64).should eq("wait_list")
+  gallagher.access_for("ch-clash").should eq([] of String)
+
+  # ===========================================================
+  # Test 60: the production scenario — an ACROD request falls back to a regular
+  # space that is booked server-side. The clash is handled gracefully (the
+  # booking is wait-listed) instead of erroring on a clashing allocation.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # only a regular space, no ACROD
+  staff.clash_update_for(60001_i64, "asset-r1")
+
+  staff.set_bookings([
+    build_booking.call(60001_i64, "clash.user@example.com",
+      mon_start, mon_end, "unallocated-60001", false, ext_acrod),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # fell back to the regular space, hit the server clash, wait-listed cleanly
+  staff.last_update_for(60001_i64).should be_nil
+  staff.last_state(60001_i64).should eq("wait_list")
+
+  # ===========================================================
+  # Test 61: a space that clashes server-side during preemption is not targeted
+  # again by later bookings — the displaced occupant isn't churned in and out
+  # repeatedly. Two higher-priority bookings contend for one space held by a
+  # lower-priority booking, but the space rejects every allocation.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # only asset-r1
+  # asset-r1 is booked server-side for the preemptors (invisible to the driver)
+  staff.clash_update_for(61001_i64, "asset-r1")
+  staff.clash_update_for(61002_i64, "asset-r1")
+
+  staff.set_bookings([
+    # low priority occupant holds the space
+    build_booking.call(61000_i64, "normal.user@example.com",
+      mon_start, mon_end, "asset-r1", true, ext_car),
+    # two higher priority bookings both want it
+    build_booking.call(61001_i64, "priority.user@example.com",
+      mon_start, mon_end, "unallocated-61001", false, ext_car),
+    build_booking.call(61002_i64, "priority.user@example.com",
+      mon_start, mon_end, "unallocated-61002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the occupant was displaced + restored exactly once (by the first preemptor);
+  # the second preemptor saw the space as occupied and didn't churn it again
+  staff.update_count_for(61000_i64).should eq(2)
+  staff.last_update_for(61000_i64).should eq("asset-r1")
+  # the occupant kept its space, never notified of a (rolled-back) displacement
+  mailer.sent?("normal.user@example.com", "parking_request", "displaced").should eq(false)
+  # both preemptors are wait-listed (the space genuinely wasn't free)
+  staff.last_update_for(61001_i64).should be_nil
+  staff.last_update_for(61002_i64).should be_nil
+  staff.last_state(61001_i64).should eq("wait_list")
+  staff.last_state(61002_i64).should eq("wait_list")
+
+  # ===========================================================
+  # Test 62: a user with several unprocessed bookings on different days gets an
+  # approval email for EACH booking — they are independent bookings, deduped
+  # only per-booking, so there is no cross-booking suppression.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # one space, reused across days
+
+  staff.set_bookings([
+    build_booking.call(62001_i64, "multi.day@example.com",
+      mon_start, mon_end, "unallocated-62001", false, ext_car),
+    build_booking.call(62002_i64, "multi.day@example.com",
+      tue_start, tue_end, "unallocated-62002", false, ext_car),
+  ].to_json)
+  gallagher.set_cardholder("multi.day@example.com", "ch-multiday")
+  calendar.set_groups("multi.day@example.com", default_grp.to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # both days allocated to the space (non-overlapping windows) and approved
+  staff.last_update_for(62001_i64).should eq("asset-r1")
+  staff.last_update_for(62002_i64).should eq("asset-r1")
+  staff.last_state(62001_i64).should eq("access_granted_emailed")
+  staff.last_state(62002_i64).should eq("access_granted_emailed")
+  # one approval email PER booking (asset-r1 -> Open Basement -> group1)
+  mailer.times_sent("multi.day@example.com", "parking_request", "approved_gallagher-group1").should eq(2)
+
+  # ===========================================================
+  # Test 63: a failed approval-email send does NOT advance the booking past
+  # "access_granted" — the next pass retries the email (without re-granting) and
+  # the user is emailed exactly once across the two attempts.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  gallagher.set_cardholder("retry.user@example.com", "ch-retry")
+  calendar.set_groups("retry.user@example.com", default_grp.to_json)
+
+  # a booking already allocated + approved, access granted but email not yet sent
+  granted_pending = {
+    id:              63001_i64,
+    booking_type:    "parking",
+    booking_start:   mon_start,
+    booking_end:     mon_end,
+    asset_id:        "asset-r1",
+    asset_ids:       ["asset-r1"],
+    user_id:         "user-63001",
+    user_email:      "retry.user@example.com",
+    user_name:       "retry.user@example.com",
+    booked_by_email: "retry.user@example.com",
+    booked_by_name:  "retry.user@example.com",
+    zones:           ["zone-building"],
+    created:         now - 1000_i64 + 63001_i64,
+    approved:        true,
+    rejected:        false,
+    deleted:         false,
+    process_state:   "access_granted",
+    extension_data:  ext_car,
+  }
+  staff.set_bookings([granted_pending].to_json)
+
+  # sweep 1: the mailer is down -> the email send fails
+  mailer.set_fail_send(true)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # not emailed, and the state was NOT advanced (no booking_state write)
+  mailer.times_sent("retry.user@example.com", "parking_request", "approved_gallagher-group1").should eq(0)
+  staff.last_state(63001_i64).should be_nil
+
+  # sweep 2: the mailer recovers -> the email is retried and succeeds
+  mailer.set_fail_send(false)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  staff.last_state(63001_i64).should eq("access_granted_emailed")
+  mailer.times_sent("retry.user@example.com", "parking_request", "approved_gallagher-group1").should eq(1)
+
+  # ===========================================================
+  # Test 64: when the staff API bookings query fails, the run ABORTS and leaves
+  # existing Gallagher access untouched — it must NOT treat the failure as "no
+  # bookings" and revoke everyone's access.
+  # ===========================================================
+
+  ab_until = now + 3600_i64 * 500
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    # a grant the driver previously made + tracked
+    access_granted: {
+      "gallagher-group1" => {
+        "abort.user@example.com|#{ab_until}" => {
+          email:         "abort.user@example.com",
+          cardholder_id: "ch-abort",
+          until_unix:    ab_until,
+        },
+      },
+    },
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  gallagher.set_cardholder("abort.user@example.com", "ch-abort")
+  # the live Gallagher membership matching the seeded grant
+  gallagher.zone_access_add_member("gallagher-group1", "ch-abort", ab_until - 1800_i64, ab_until)
+
+  # the staff API bookings query errors this sweep
+  staff.set_fail_query(true)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the run aborted cleanly: the existing grant was NOT revoked...
+  gallagher.access_for("ch-abort").should contain("gallagher-group1")
+  # ...and no allocation work happened
+  staff.approved.empty?.should eq(true)
+
+  # next sweep (staff API recovered) reconciles normally — with no bookings the
+  # now-expired tracked grant is cleaned up as usual
+  staff.set_fail_query(false)
+  staff.set_bookings("[]")
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+  gallagher.access_for("ch-abort").should_not contain("gallagher-group1")
+
+  # ===========================================================
+  # Test 65: the (expensive) Gallagher cardholder lookup is cached across
+  # sweeps — it runs once per user, not on every sweep.
+  # ===========================================================
+
+  staff.set_fail_query(false)
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  gallagher.set_cardholder("cached.user@example.com", "ch-cached")
+  calendar.set_groups("cached.user@example.com", default_grp.to_json)
+
+  cached_booking = [
+    build_booking.call(65001_i64, "cached.user@example.com",
+      mon_start, mon_end, "unallocated-65001", false, ext_car),
+  ].to_json
+
+  # two sweeps for the same user — no settings() change between them (which
+  # would otherwise flush the cache)
+  staff.set_bookings(cached_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+  staff.set_bookings(cached_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the cardholder lookup ran exactly once despite two sweeps (and multiple
+  # internal resolutions per sweep)
+  gallagher.lookup_count("cached.user@example.com").should eq(1)
+
+  # ===========================================================
+  # Test 66: changing the lookup MECHANISM (gallagher_id_field) flushes the
+  # cache, so the user is re-resolved through the new field rather than served
+  # a stale cardholder id.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  # with no id field, the user resolves by email to ch-old
+  gallagher.set_cardholder("flip.user@example.com", "ch-old")
+  calendar.set_groups("flip.user@example.com", default_grp.to_json)
+
+  flip_booking = [
+    build_booking.call(66001_i64, "flip.user@example.com",
+      mon_start, mon_end, "unallocated-66001", false, ext_car),
+  ].to_json
+  staff.set_bookings(flip_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+  gallagher.access_for("ch-old").should contain("gallagher-group1")
+
+  # switch to directory-resolved lookups: the SAME email now resolves (via
+  # employeeId) to a different cardholder. The cache must flush so the new
+  # cardholder is used.
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    gallagher_id_field: "employeeId",
+  })
+  sleep 100.milliseconds
+
+  calendar.set_user_employee_id("flip.user@example.com", "EMP-NEW")
+  gallagher.set_cardholder("EMP-NEW", "ch-new")
+  staff.set_bookings(flip_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # re-resolved through the new field to the new cardholder (cache was flushed)
+  gallagher.access_for("ch-new").should contain("gallagher-group1")
+
+  # ===========================================================
+  # Test 67: the user priority (AD group) lookup is cached across sweeps — the
+  # expensive directory group lookup runs once per user, not every sweep.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  gallagher.set_cardholder("prio.user@example.com", "ch-prio")
+  calendar.set_groups("prio.user@example.com", [{id: "group-default", email: "default@grp.com"}].to_json)
+
+  prio_booking = [
+    build_booking.call(67001_i64, "prio.user@example.com",
+      mon_start, mon_end, "unallocated-67001", false, ext_car),
+  ].to_json
+
+  # two sweeps for the same user — no settings() change between them
+  staff.set_bookings(prio_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+  staff.set_bookings(prio_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the directory group lookup ran exactly once despite two sweeps
+  calendar.group_lookup_count("prio.user@example.com").should eq(1)
+
+  # ===========================================================
+  # Test 68: changing auto_approval_groups flushes the priority cache, so users
+  # are re-evaluated against the new groups rather than served a stale priority.
+  # ===========================================================
+
+  settings({
+    poll_rate: 999_999,
+    # a different priority-group list invalidates cached priorities
+    auto_approval_groups:            ["group-vip", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.set_bookings(prio_booking)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the cache was flushed on the settings change, so the user was looked up again
+  calendar.group_lookup_count("prio.user@example.com").should eq(2)
+
+  # ===========================================================
+  # Test 69: a booking on a space that is no longer bookable (e.g. taken out of
+  # service) is displaced and re-allocated to a free bookable space.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: true,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  gallagher.set_cardholder("broken.user@example.com", "ch-broken")
+  calendar.set_groups("broken.user@example.com", default_grp.to_json)
+
+  oos_spaces = [
+    {
+      # mapped (group1) but taken OUT OF SERVICE
+      id: "asset-broken", identifier: "BROKEN",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: false,
+    },
+    {
+      id: "asset-good", identifier: "GOOD",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+  ]
+  staff.set_assets(oos_spaces.to_json)
+
+  staff.set_bookings([
+    build_booking.call(69001_i64, "broken.user@example.com",
+      mon_start, mon_end, "asset-broken", true, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # moved off the out-of-service space and re-allocated to the free one; the
+  # displaced email is suppressed because the booking immediately landed a new
+  # space (the approval email covers it)
+  staff.last_update_for(69001_i64).should eq("asset-good")
+  mailer.sent?("broken.user@example.com", "parking_request", "displaced").should eq(false)
+  gallagher.access_for("ch-broken").should contain("gallagher-group1")
+
+  # ===========================================================
+  # Test 70: a booking on a non-bookable space is displaced EVEN when
+  # allow_displacement is false — the space is gone, this is a forced move, not
+  # a preemption.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: false,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  gallagher.set_cardholder("broken.user@example.com", "ch-broken")
+  calendar.set_groups("broken.user@example.com", default_grp.to_json)
+  staff.set_assets(oos_spaces.to_json)
+
+  staff.set_bookings([
+    build_booking.call(70001_i64, "broken.user@example.com",
+      mon_start, mon_end, "asset-broken", true, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # forced off the out-of-service space and re-allocated despite displacement
+  # being disabled (that policy only governs preemption of lower-priority users)
+  staff.last_update_for(70001_i64).should eq("asset-good")
+  # re-allocated immediately, so no displaced email
+  mailer.sent?("broken.user@example.com", "parking_request", "displaced").should eq(false)
+  gallagher.access_for("ch-broken").should contain("gallagher-group1")
+
+  # ===========================================================
+  # Test 71: a booking on a non-bookable space with NO free space to move to is
+  # still vacated (moved off) and wait-listed — even with displacement disabled.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  gallagher.set_cardholder("broken.user@example.com", "ch-broken")
+  calendar.set_groups("broken.user@example.com", default_grp.to_json)
+  # only the broken space exists
+  staff.set_assets([oos_spaces[0]].to_json)
+
+  staff.set_bookings([
+    build_booking.call(71001_i64, "broken.user@example.com",
+      mon_start, mon_end, "asset-broken", true, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # vacated (moved to the displaced placeholder) and wait-listed; the user no
+  # longer holds the out-of-service space. With no space to land, the displaced
+  # email IS sent — carrying the reason for the move.
+  staff.last_update_for(71001_i64).should eq("unallocated-displaced-71001")
+  staff.last_state(71001_i64).should eq("wait_list")
+  mailer.sent?("broken.user@example.com", "parking_request", "displaced").should eq(true)
+  mailer.arg_for("broken.user@example.com", "parking_request", "displaced", "reason")
+    .should eq("The parking space was taken out of service.")
+  # no lingering access to the broken space's group from this booking
+  gallagher.access_for("ch-broken").should eq([] of String)
+
+  # ===========================================================
+  # Test 72: a user previously on the no-card list who has since been issued a
+  # card (or simply doesn't book again) is DROPPED from the list — it now
+  # reflects the post-run state rather than growing forever. No re-book needed.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    # seed the persisted no-card list with a user who won't book this run
+    users_without_cards: ["stale.user@example.com"],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  staff.set_bookings("[]") # stale.user has no booking / no lookup error this run
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # dropped without needing to re-book, and not (re)emailed
+  status[:users_without_cards].as_a.map(&.as_s).should_not contain("stale.user@example.com")
+  mailer.sent?("stale.user@example.com", "parking_request", "no_card").should eq(false)
+
+  # ===========================================================
+  # Test 73: the no-card email carries the reason a cardholder couldn't be
+  # resolved.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  # email-based lookup, no cardholder registered -> "no gallagher cardholder found"
+  calendar.set_groups("nocard2.user@example.com", default_grp.to_json)
+  staff.set_bookings([
+    build_booking.call(73001_i64, "nocard2.user@example.com",
+      mon_start, mon_end, "unallocated-73001", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # withheld and notified, the email carrying the reason
+  staff.last_update_for(73001_i64).should be_nil
+  mailer.sent?("nocard2.user@example.com", "parking_request", "no_card").should eq(true)
+  mailer.arg_for("nocard2.user@example.com", "parking_request", "no_card", "reason")
+    .should eq("no gallagher cardholder found")
+  status[:users_without_cards].as_a.map(&.as_s).should contain("nocard2.user@example.com")
+
+  # ===========================================================
+  # Test 74: displacement_notification_hours gives users notice — a booking
+  # starting within the window can't be preempted, so the higher-priority
+  # booking waits instead. A booking starting OUTSIDE the window still can be.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 24,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: true,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # one space: asset-r1
+  gallagher.set_cardholder("notice.low@example.com", "ch-notice-low")
+  gallagher.set_cardholder("notice.high@example.com", "ch-notice-high")
+  calendar.set_groups("notice.low@example.com", default_grp.to_json)
+  calendar.set_groups("notice.high@example.com", [{id: "group-priority", email: "priority@grp.com"}].to_json)
+
+  # the occupant starts in 2h — INSIDE the 24h notice window
+  soon_start = now + 3600_i64 * 2
+  soon_end = soon_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(74001_i64, "notice.low@example.com",
+      soon_start, soon_end, "asset-r1", true, ext_car),
+    build_booking.call(74002_i64, "notice.high@example.com",
+      soon_start, soon_end, "unallocated-74002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the occupant keeps the space (too close to its start to be displaced)...
+  staff.last_update_for(74001_i64).should be_nil
+  mailer.sent?("notice.low@example.com", "parking_request", "displaced").should eq(false)
+  # ...and the higher-priority booking waits
+  staff.last_update_for(74002_i64).should be_nil
+  staff.last_state(74002_i64).should eq("wait_list")
+
+  # --- a booking starting beyond the window CAN still be preempted ---
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  gallagher.set_cardholder("notice.low@example.com", "ch-notice-low")
+  gallagher.set_cardholder("notice.high@example.com", "ch-notice-high")
+  calendar.set_groups("notice.low@example.com", default_grp.to_json)
+  calendar.set_groups("notice.high@example.com", [{id: "group-priority", email: "priority@grp.com"}].to_json)
+
+  # the occupant starts in 48h — OUTSIDE the 24h notice window
+  later_start = now + 3600_i64 * 48
+  later_end = later_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(74011_i64, "notice.low@example.com",
+      later_start, later_end, "asset-r1", true, ext_car),
+    build_booking.call(74012_i64, "notice.high@example.com",
+      later_start, later_end, "unallocated-74012", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # enough notice -> the occupant is displaced and the high-priority booking wins
+  staff.last_update_for(74011_i64).should eq("unallocated-displaced-74011")
+  mailer.sent?("notice.low@example.com", "parking_request", "displaced").should eq(true)
+  staff.last_update_for(74012_i64).should eq("asset-r1")
+
+  # ===========================================================
+  # Test 75: a FORCED move (space out of service) bypasses the notice period —
+  # the space is gone, so even a booking starting within the window is moved.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  gallagher.set_cardholder("notice.oos@example.com", "ch-notice-oos")
+  calendar.set_groups("notice.oos@example.com", default_grp.to_json)
+  forced_spaces = [
+    {
+      id: "asset-oos", identifier: "OOS",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: false,
+    },
+    {
+      id: "asset-spare-oos", identifier: "SPAREOOS",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+  ]
+  staff.set_assets(forced_spaces.to_json)
+
+  staff.set_bookings([
+    build_booking.call(75001_i64, "notice.oos@example.com",
+      soon_start, soon_end, "asset-oos", true, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # moved off the out-of-service space and re-allocated despite the notice window
+  staff.last_update_for(75001_i64).should eq("asset-spare-oos")
+
+  # ===========================================================
+  # Test 76: with displacement DISABLED, the displacement report still records
+  # which displacements WOULD occur (for management review) — without actually
+  # bumping anyone.
+  # ===========================================================
+
+  report_tz = Time::Location.load("Australia/Sydney")
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: false,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # asset-r1
+  gallagher.set_cardholder("report.low@example.com", "ch-report-low")
+  gallagher.set_cardholder("report.high@example.com", "ch-report-high")
+  calendar.set_groups("report.low@example.com", default_grp.to_json)
+  calendar.set_groups("report.high@example.com", [{id: "group-priority", email: "priority@grp.com"}].to_json)
+
+  rep_start = now + 3600_i64 * 100
+  rep_end = rep_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(76001_i64, "report.low@example.com",
+      rep_start, rep_end, "asset-r1", true, ext_car),
+    build_booking.call(76002_i64, "report.high@example.com",
+      rep_start, rep_end, "unallocated-76002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # nobody was actually displaced (displacement disabled)
+  staff.last_update_for(76001_i64).should be_nil
+  staff.last_state(76002_i64).should eq("wait_list")
+  mailer.sent?("report.low@example.com", "parking_request", "displaced").should eq(false)
+
+  # ...but the would-be displacement is captured in the report
+  report = status[:displacement_report].as_a
+  report.size.should eq(1)
+  entry = report.first
+  # the report uses the space NAME (identifier), not the asset id
+  entry["space"].as_s.should eq("R1")
+  entry["displaced"].as_s.should eq("report.low@example.com")
+  entry["replaced_with"].as_s.should eq("report.high@example.com")
+  entry["date"].as_s.should eq(Time.unix(rep_start).in(report_tz).to_s("%d/%m/%Y"))
+
+  # ===========================================================
+  # Test 77: with displacement ENABLED, the report records actual displacements,
+  # date-sorted (here two bumps on different parking dates).
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: true,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # asset-r1
+  gallagher.set_cardholder("rep.low1@example.com", "ch-rl1")
+  gallagher.set_cardholder("rep.low2@example.com", "ch-rl2")
+  gallagher.set_cardholder("rep.high1@example.com", "ch-rh1")
+  gallagher.set_cardholder("rep.high2@example.com", "ch-rh2")
+  calendar.set_groups("rep.low1@example.com", default_grp.to_json)
+  calendar.set_groups("rep.low2@example.com", default_grp.to_json)
+  calendar.set_groups("rep.high1@example.com", [{id: "group-priority", email: "p@grp.com"}].to_json)
+  calendar.set_groups("rep.high2@example.com", [{id: "group-priority", email: "p@grp.com"}].to_json)
+
+  day1_start = now + 3600_i64 * 100
+  day1_end = day1_start + 3600_i64
+  day2_start = day1_start + 86400_i64 * 2 # two days later -> a different date
+  day2_end = day2_start + 3600_i64
+
+  # NOTE: the day-2 preemptor (77003) is created BEFORE the day-1 one (77004) so
+  # it is processed first and recorded first — the report must re-sort by date.
+  staff.set_bookings([
+    build_booking.call(77001_i64, "rep.low1@example.com",
+      day1_start, day1_end, "asset-r1", true, ext_car),
+    build_booking.call(77002_i64, "rep.low2@example.com",
+      day2_start, day2_end, "asset-r1", true, ext_car),
+    build_booking.call(77003_i64, "rep.high2@example.com",
+      day2_start, day2_end, "unallocated-77003", false, ext_car),
+    build_booking.call(77004_i64, "rep.high1@example.com",
+      day1_start, day1_end, "unallocated-77004", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the higher-priority bookings took the space on each day
+  staff.last_update_for(77003_i64).should eq("asset-r1")
+  staff.last_update_for(77004_i64).should eq("asset-r1")
+
+  # the report has both displacements, sorted by date
+  report2 = status[:displacement_report].as_a
+  report2.size.should eq(2)
+  report2.map { |e| e["date"].as_s }.should eq([
+    Time.unix(day1_start).in(report_tz).to_s("%d/%m/%Y"),
+    Time.unix(day2_start).in(report_tz).to_s("%d/%m/%Y"),
+  ])
+  report2.map { |e| e["displaced"].as_s }.should eq(["rep.low1@example.com", "rep.low2@example.com"])
+  report2.map { |e| e["replaced_with"].as_s }.should eq(["rep.high1@example.com", "rep.high2@example.com"])
+
+  # ===========================================================
+  # Test 78: with displacement DISABLED and several would-be preemptors, each is
+  # reported against a DIFFERENT space — the disabled run simulates the moves in
+  # its local view so it doesn't keep reporting the same occupant/space.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    allow_displacement: false,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  cascade_spaces = [
+    {
+      id: "asset-ca", identifier: "CA",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+    {
+      id: "asset-cb", identifier: "CB",
+      assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+      features: ["carpriority", "Open Basement"], notes: "Car",
+      security_system_groups: [] of String, bookable: true,
+    },
+  ]
+  staff.set_assets(cascade_spaces.to_json)
+  gallagher.set_cardholder("casc.low1@example.com", "ch-cl1")
+  gallagher.set_cardholder("casc.low2@example.com", "ch-cl2")
+  gallagher.set_cardholder("casc.high1@example.com", "ch-ch1")
+  gallagher.set_cardholder("casc.high2@example.com", "ch-ch2")
+  calendar.set_groups("casc.low1@example.com", default_grp.to_json)
+  calendar.set_groups("casc.low2@example.com", default_grp.to_json)
+  calendar.set_groups("casc.high1@example.com", [{id: "group-priority", email: "p@grp.com"}].to_json)
+  calendar.set_groups("casc.high2@example.com", [{id: "group-priority", email: "p@grp.com"}].to_json)
+
+  cstart = now + 3600_i64 * 120
+  cend = cstart + 3600_i64
+  # two low-priority occupants (one per space) and two higher-priority bookings,
+  # all overlapping — each preemptor could take either space
+  staff.set_bookings([
+    build_booking.call(78001_i64, "casc.low1@example.com",
+      cstart, cend, "asset-ca", true, ext_car),
+    build_booking.call(78002_i64, "casc.low2@example.com",
+      cstart, cend, "asset-cb", true, ext_car),
+    build_booking.call(78003_i64, "casc.high1@example.com",
+      cstart, cend, "unallocated-78003", false, ext_car),
+    build_booking.call(78004_i64, "casc.high2@example.com",
+      cstart, cend, "unallocated-78004", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # nobody actually displaced (disabled)
+  staff.last_update_for(78001_i64).should be_nil
+  staff.last_update_for(78002_i64).should be_nil
+
+  # the report cascades across BOTH spaces/occupants rather than repeating one
+  report3 = status[:displacement_report].as_a
+  report3.size.should eq(2)
+  report3.map { |e| e["space"].as_s }.should eq(["CA", "CB"])
+  report3.map { |e| e["displaced"].as_s }.should eq(["casc.low1@example.com", "casc.low2@example.com"])
+  report3.map { |e| e["replaced_with"].as_s }.should eq(["casc.high1@example.com", "casc.high2@example.com"])
+
+  # ===========================================================
+  # Test 79: manual_displacement swaps a space from one user to another, creating
+  # a wait-list booking for the assignee when they don't have one. Both sides are
+  # notified.
+  # ===========================================================
+
+  settings({
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    # manual displacement bypasses the policy, even when off
+    allow_displacement: false,
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json) # asset-r1 / identifier R1
+  gallagher.set_cardholder("evicted@example.com", "ch-evicted")
+  gallagher.set_cardholder("vip@example.com", "ch-vip")
+  calendar.set_groups("evicted@example.com", default_grp.to_json)
+  calendar.set_groups("vip@example.com", default_grp.to_json)
+  # the assignee (vip) is resolvable in the directory (for the created booking)
+  calendar.set_user("vip@example.com", {email: "vip@example.com", name: "VIP User"}.to_json)
+
+  mstart = now + 3600_i64 * 200
+  mend = mstart + 3600_i64
+  # only the displaced user has a booking; the assignee has none (it's created)
+  staff.set_bookings([
+    build_booking.call(80001_i64, "evicted@example.com",
+      mstart, mend, "asset-r1", true, ext_car),
+  ].to_json)
+
+  exec(:manual_displacement, mstart, {"evicted@example.com" => "vip@example.com"}).get
+  sleep 100.milliseconds
+
+  # the displaced user was moved off the space and notified with a reason
+  staff.last_update_for(80001_i64).should eq("unallocated-displaced-80001")
+  staff.last_state(80001_i64).should eq("wait_list")
+  mailer.sent?("evicted@example.com", "parking_request", "displaced").should eq(true)
+  mailer.arg_for("evicted@example.com", "parking_request", "displaced", "reason")
+    .should eq("Your parking space has been reassigned.")
+
+  # a wait-list booking was created for the assignee and assigned the space
+  vip_id = staff.created_id_for("vip@example.com")
+  vip_id.should_not be_nil
+  vip_id = vip_id.not_nil!
+  staff.last_update_for(vip_id).should eq("asset-r1")
+  staff.approved.includes?(vip_id).should eq(true)
+  staff.last_state(vip_id).should eq("access_granted_emailed")
+  mailer.sent?("vip@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+  # the created booking carries the assignee's directory name (via calendar.get_user)
+  mailer.arg_for("vip@example.com", "parking_request", "approved_gallagher-group1", "visitor_name")
+    .should eq("VIP User")
+
+  # ===========================================================
+  # Test 80: when the assignee already has a (wait-list) booking, manual
+  # displacement assigns THAT booking rather than creating a new one.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([two_regular[0]].to_json)
+  gallagher.set_cardholder("evicted2@example.com", "ch-evicted2")
+  gallagher.set_cardholder("vip2@example.com", "ch-vip2")
+  calendar.set_groups("evicted2@example.com", default_grp.to_json)
+  calendar.set_groups("vip2@example.com", default_grp.to_json)
+
+  staff.set_bookings([
+    build_booking.call(81001_i64, "evicted2@example.com",
+      mstart, mend, "asset-r1", true, ext_car),
+    # the assignee already has a wait-list booking for the same time
+    build_booking.call(81002_i64, "vip2@example.com",
+      mstart, mend, "unallocated-81002", false, ext_car),
+  ].to_json)
+
+  exec(:manual_displacement, mstart, {"evicted2@example.com" => "vip2@example.com"}).get
+  sleep 100.milliseconds
+
+  # no new booking was created — the existing one was assigned the space
+  staff.created_id_for("vip2@example.com").should be_nil
+  staff.last_update_for(81001_i64).should eq("unallocated-displaced-81001")
+  staff.last_update_for(81002_i64).should eq("asset-r1")
+  staff.approved.includes?(81002_i64).should eq(true)
+  mailer.sent?("vip2@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+  mailer.sent?("evicted2@example.com", "parking_request", "displaced").should eq(true)
+
+  # ===========================================================
+  # Test 81: a wait-listed booking that started in the past AND was created more
+  # than 3 hours ago is stale — it is NOT allocated (avoids clashing with
+  # bookings that have since ended). Past-start-but-recently-created and
+  # future-start-but-old bookings are still allocated.
+  # ===========================================================
+
+  settings({
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  stale_spaces = [
+    {id: "asset-st1", identifier: "ST1", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+     features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true},
+    {id: "asset-st2", identifier: "ST2", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+     features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true},
+    {id: "asset-st3", identifier: "ST3", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+     features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true},
+  ]
+  staff.set_assets(stale_spaces.to_json)
+  gallagher.set_cardholder("stale.user@example.com", "ch-stale")
+  gallagher.set_cardholder("walkin.user@example.com", "ch-walkin")
+  gallagher.set_cardholder("future.user@example.com", "ch-future")
+  calendar.set_groups("stale.user@example.com", default_grp.to_json)
+  calendar.set_groups("walkin.user@example.com", default_grp.to_json)
+  calendar.set_groups("future.user@example.com", default_grp.to_json)
+
+  stale_booking = ->(id : Int64, user : String, b_start : Int64, b_end : Int64, created_at : Int64) do
+    {
+      id:              id,
+      booking_type:    "parking",
+      booking_start:   b_start,
+      booking_end:     b_end,
+      asset_id:        "unallocated-#{id}",
+      asset_ids:       ["unallocated-#{id}"],
+      user_id:         "user-#{id}",
+      user_email:      user,
+      user_name:       user,
+      booked_by_email: user,
+      booked_by_name:  user,
+      zones:           ["zone-building"],
+      created:         created_at,
+      approved:        false,
+      rejected:        false,
+      deleted:         false,
+      extension_data:  ext_car,
+    }
+  end
+
+  staff.set_bookings([
+    # started 1h ago, created 4h ago -> STALE -> not allocated
+    stale_booking.call(83001_i64, "stale.user@example.com", now - 3600_i64, now + 3600_i64, now - 4_i64 * 3600),
+    # started 1h ago, created just now -> walk-in, allocated
+    stale_booking.call(83002_i64, "walkin.user@example.com", now - 3600_i64, now + 3600_i64, now),
+    # starts in 2h, created 4h ago -> future start, allocated
+    stale_booking.call(83003_i64, "future.user@example.com", now + 3600_i64 * 2, now + 3600_i64 * 3, now - 4_i64 * 3600),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the stale booking is left alone (no allocation attempt)
+  staff.last_update_for(83001_i64).should be_nil
+  staff.approved.includes?(83001_i64).should eq(false)
+  # the recently-created (walk-in) and future bookings are still allocated
+  staff.last_update_for(83002_i64).should_not be_nil
+  staff.last_update_for(83003_i64).should_not be_nil
+
+  # ===========================================================
+  # Test 82: when calendar_invite_from is set, the approval email carries a
+  # METHOD:REQUEST .ics invite for the allocated space, and a later displacement
+  # emails a METHOD:CANCEL for the SAME booking UID — so the space is removed
+  # from (not duplicated on) the user's calendar.
+  # ===========================================================
+
+  settings({
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    calendar_invite_from:      "parking@place.technology",
+    calendar_invite_from_name: "Building Parking",
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  gallagher.set_cardholder("inv.user@example.com", "ch-inv")
+  calendar.set_groups("inv.user@example.com", default_grp.to_json)
+
+  inv_space = {
+    id: "asset-inv1", identifier: "INV1", assigned_to: "",
+    zones: ["zone-building", "zone-level-B1"],
+    features: ["carpriority", "Open Basement"], notes: "Car",
+    security_system_groups: [] of String, bookable: true,
+  }
+  staff.set_assets([inv_space].to_json)
+
+  inv_start = now + 3600_i64 * 300
+  inv_end = inv_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(84001_i64, "inv.user@example.com",
+      inv_start, inv_end, "unallocated-84001", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # allocated + approval email sent for the Open Basement group
+  staff.last_update_for(84001_i64).should eq("asset-inv1")
+  mailer.sent?("inv.user@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+
+  # the approval email carries a METHOD:REQUEST invite describing the space
+  invite = mailer.attachment_for("inv.user@example.com", "parking_request", "approved_gallagher-group1")
+  invite.should_not be_nil
+  invite = invite.not_nil!
+  invite.should contain("BEGIN:VCALENDAR")
+  invite.should contain("METHOD:REQUEST")
+  invite.should contain("UID:parking-84001@place.technology")
+  invite.should contain("SEQUENCE:0")
+  invite.should contain("DTSTART:#{Time.unix(inv_start).to_s("%Y%m%dT%H%M%SZ")}")
+  invite.should contain("DTEND:#{Time.unix(inv_end).to_s("%Y%m%dT%H%M%SZ")}")
+  invite.should contain("SUMMARY:Parking - INV1")
+  invite.should contain("STATUS:CONFIRMED")
+  invite.should contain("ORGANIZER;CN=Building Parking:mailto:parking@place.technology")
+  invite.should contain("ATTENDEE;CN=inv.user@example.com;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:inv.user@example.com")
+
+  # --- displacement: the space goes out of service, forcing a move off it ---
+  staff.reset_calls
+  mailer.reset
+  # same space, now not bookable (e.g. flooded)
+  staff.set_assets([inv_space.merge({bookable: false})].to_json)
+
+  inv2_start = now + 3600_i64 * 320
+  inv2_end = inv2_start + 3600_i64
+  # the booking is already allocated on the space, with a location + last_changed
+  staff.set_bookings([
+    {
+      id:              84001_i64,
+      booking_type:    "parking",
+      booking_start:   inv2_start,
+      booking_end:     inv2_end,
+      asset_id:        "asset-inv1",
+      asset_ids:       ["asset-inv1"],
+      user_id:         "user-84001",
+      user_email:      "inv.user@example.com",
+      user_name:       "inv.user@example.com",
+      booked_by_email: "inv.user@example.com",
+      booked_by_name:  "inv.user@example.com",
+      zones:           ["zone-building"],
+      created:         now - 500_i64,
+      last_changed:    now,
+      approved:        true,
+      rejected:        false,
+      deleted:         false,
+      process_state:   "access_granted_emailed",
+      extension_data:  {
+        "vehicle_type" => JSON::Any.new("car"),
+        "request_type" => JSON::Any.new("standard"),
+        "location"     => JSON::Any.new("INV1"),
+      },
+    },
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the booking was moved off the out-of-service space and a displaced email sent
+  staff.last_update_for(84001_i64).should eq("unallocated-displaced-84001")
+  mailer.sent?("inv.user@example.com", "parking_request", "displaced").should eq(true)
+
+  # that email carries a METHOD:CANCEL invite for the SAME UID, with a higher
+  # SEQUENCE so clients supersede the earlier REQUEST and remove the entry
+  cancel = mailer.attachment_for("inv.user@example.com", "parking_request", "displaced")
+  cancel.should_not be_nil
+  cancel = cancel.not_nil!
+  cancel.should contain("METHOD:CANCEL")
+  cancel.should contain("UID:parking-84001@place.technology")
+  cancel.should contain("STATUS:CANCELLED")
+  cancel.should contain("SEQUENCE:#{now + 1}")
+  cancel.should contain("SUMMARY:Parking - INV1")
+
+  # ===========================================================
+  # Test 83: when a user cancels a booking that held a space, a cancellation
+  # email + METHOD:CANCEL invite is sent (driven by the monitor event, since a
+  # cancelled booking drops out of the allocation sweep). A cancelled booking
+  # that was only ever wait-listed sends nothing.
+  # ===========================================================
+
+  settings({
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    calendar_invite_from:      "parking@place.technology",
+    calendar_invite_from_name: "Building Parking",
+  })
+  sleep 100.milliseconds
+
+  # clear the world so the sweep that a cancellation event also triggers is a
+  # no-op and can't pollute the mailer assertions below
+  staff.reset_calls
+  mailer.reset
+  staff.set_assets("[]")
+  staff.set_bookings("[]")
+
+  cancel_start = now + 3600_i64 * 340
+  cancel_end = cancel_start + 3600_i64
+
+  cancelled_booking = ->(state : String, asset : String) do
+    {
+      action:          "cancelled",
+      id:              85001_i64,
+      booking_type:    "parking",
+      booking_start:   cancel_start,
+      booking_end:     cancel_end,
+      asset_id:        asset,
+      asset_ids:       [asset],
+      user_id:         "user-85001",
+      user_email:      "cancel.user@example.com",
+      user_name:       "Cancel User",
+      booked_by_email: "cancel.user@example.com",
+      booked_by_name:  "Cancel User",
+      zones:           ["zone-building"],
+      created:         now - 500_i64,
+      last_changed:    now,
+      approved:        true,
+      rejected:        false,
+      deleted:         false,
+      process_state:   state,
+      extension_data:  {"location" => "INV1"},
+    }
+  end
+
+  # a cancelled booking that HELD a space -> notify + CANCEL invite
+  publish("staff/booking/changed", cancelled_booking.call("access_granted_emailed", "asset-inv1").to_json)
+  sleep 100.milliseconds
+
+  mailer.sent?("cancel.user@example.com", "parking_request", "cancelled").should eq(true)
+  ccancel = mailer.attachment_for("cancel.user@example.com", "parking_request", "cancelled")
+  ccancel.should_not be_nil
+  ccancel = ccancel.not_nil!
+  ccancel.should contain("METHOD:CANCEL")
+  ccancel.should contain("UID:parking-85001@place.technology")
+  ccancel.should contain("STATUS:CANCELLED")
+  ccancel.should contain("SEQUENCE:#{now + 1}")
+  # the email names the space that was cancelled
+  mailer.arg_for("cancel.user@example.com", "parking_request", "cancelled", "space_identifier").should eq("INV1")
+  # marked handled so a repeated event won't re-notify
+  staff.last_state(85001_i64).should eq("cancelled_emailed")
+
+  # a repeat event for an already-notified cancellation does not re-send
+  publish("staff/booking/changed", cancelled_booking.call("cancelled_emailed", "asset-inv1").to_json)
+  sleep 100.milliseconds
+  mailer.times_sent("cancel.user@example.com", "parking_request", "cancelled").should eq(1)
+
+  # a cancelled booking that was only ever wait-listed -> nothing is sent
+  mailer.reset
+  publish("staff/booking/changed", {
+    action:          "cancelled",
+    id:              85002_i64,
+    booking_type:    "parking",
+    booking_start:   cancel_start,
+    booking_end:     cancel_end,
+    asset_id:        "unallocated-85002",
+    asset_ids:       ["unallocated-85002"],
+    user_id:         "user-85002",
+    user_email:      "waitlist.user@example.com",
+    user_name:       "Wait List User",
+    booked_by_email: "waitlist.user@example.com",
+    booked_by_name:  "Wait List User",
+    zones:           ["zone-building"],
+    created:         now - 500_i64,
+    last_changed:    now,
+    approved:        false,
+    rejected:        false,
+    deleted:         false,
+    process_state:   "wait_list",
+    extension_data:  {} of String => String,
+  }.to_json)
+  sleep 100.milliseconds
+  mailer.send_count.should eq(0)
+
+  # ===========================================================
+  # Test 84: a PERSISTENT directory failure (all retries exhausted) must not
+  # poison the priority cache. Sweep 1: every group lookup for a top-priority
+  # user fails, so they resolve to nil -> treated as priority 0 for that run and
+  # a default user (created earlier) takes the only space. Sweep 2: the directory
+  # has recovered — the lookup must be RETRIED (nil is never cached) so the
+  # user's true group priority is seen and they preempt the lower-priority
+  # occupant.
+  # ===========================================================
+
+  retry_settings = {
+    poll_rate:                       999_999,
+    auto_approval_groups:            ["group-priority", "group-default"],
+    displacement_notification_hours: 0,
+    car_zone_priority:               ["carpriority", "shared"],
+    bike_zone_priority:              ["bikepriority", "shared"],
+    parking_areas:                   {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+    # retry twice, with no backoff, so the test doesn't actually sleep
+    group_lookup_retries: 2,
+    group_lookup_backoff: 0,
+  }
+  settings(retry_settings)
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  pr_space = [
+    {id: "asset-pr1", identifier: "PR1", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+     features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true},
+  ].to_json
+  staff.set_assets(pr_space)
+  gallagher.set_cardholder("pexec.user@example.com", "ch-pexec")
+  gallagher.set_cardholder("plowly.user@example.com", "ch-plowly")
+  # pexec.user is in the TOP priority group; plowly.user is in no groups
+  calendar.set_groups("pexec.user@example.com", [{id: "group-priority", email: "priority@grp.com"}].to_json)
+  calendar.set_groups("plowly.user@example.com", [] of NamedTuple(id: String, email: String))
+  # the directory is down for pexec.user for far more than the retry budget
+  calendar.set_fail_groups("pexec.user@example.com", 100)
+
+  pr_start = now + 3600_i64 * 360
+  pr_end = pr_start + 3600_i64
+  # plowly's booking was created EARLIER (lower id => earlier created), so it
+  # wins the created_at tiebreak while pexec is wrongly at priority 0
+  staff.set_bookings([
+    build_booking.call(86001_i64, "plowly.user@example.com",
+      pr_start, pr_end, "unallocated-86001", false, ext_car),
+    build_booking.call(86002_i64, "pexec.user@example.com",
+      pr_start, pr_end, "unallocated-86002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the lookup was attempted retries+1 times (initial + 2 retries) then gave up
+  calendar.group_lookup_count("pexec.user@example.com").should eq(3)
+  # during the outage the space went to the default user
+  staff.last_update_for(86001_i64).should eq("asset-pr1")
+  staff.last_update_for(86002_i64).should be_nil
+
+  # --- the directory recovers ---
+  calendar.set_fail_groups("pexec.user@example.com", 0)
+
+  staff.reset_calls
+  mailer.reset
+  # world state after sweep 1: plowly holds the space, pexec is wait-listed
+  plowly_allocated = build_booking.call(86001_i64, "plowly.user@example.com",
+    pr_start, pr_end, "asset-pr1", true, ext_car)
+  staff.set_bookings([
+    plowly_allocated.merge({process_state: "access_granted_emailed"}),
+    build_booking.call(86002_i64, "pexec.user@example.com",
+      pr_start, pr_end, "unallocated-86002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the failed lookup must have been retried, not served from a cached 0
+  calendar.group_lookup_count("pexec.user@example.com").should eq(4)
+  # with their true priority visible, pexec preempts the priority-0 occupant
+  staff.last_update_for(86002_i64).should eq("asset-pr1")
+  staff.last_update_for(86001_i64).should eq("unallocated-displaced-86001")
+  mailer.sent?("pexec.user@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+  mailer.sent?("plowly.user@example.com", "parking_request", "displaced").should eq(true)
+
+  # ===========================================================
+  # Test 85: a TRANSIENT directory blip recovers WITHIN the sweep — the lookup
+  # is retried and succeeds, so the top-group user keeps their true priority and
+  # wins the space over an earlier-created default user in the SAME run (no
+  # displacement round-trip needed).
+  # ===========================================================
+
+  settings(retry_settings)
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets(pr_space)
+  gallagher.set_cardholder("texec.user@example.com", "ch-texec")
+  gallagher.set_cardholder("tlowly.user@example.com", "ch-tlowly")
+  calendar.set_groups("texec.user@example.com", [{id: "group-priority", email: "priority@grp.com"}].to_json)
+  calendar.set_groups("tlowly.user@example.com", [] of NamedTuple(id: String, email: String))
+  # the directory fails once for texec.user, then recovers (within the retries)
+  calendar.set_fail_groups("texec.user@example.com", 1)
+
+  tr_start = now + 3600_i64 * 380
+  tr_end = tr_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(87001_i64, "tlowly.user@example.com",
+      tr_start, tr_end, "unallocated-87001", false, ext_car),
+    build_booking.call(87002_i64, "texec.user@example.com",
+      tr_start, tr_end, "unallocated-87002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # one failure + one successful retry
+  calendar.group_lookup_count("texec.user@example.com").should eq(2)
+  # priority stayed accurate, so the top-group user won the only space outright
+  staff.last_update_for(87002_i64).should eq("asset-pr1")
+  staff.last_update_for(87001_i64).should be_nil
+  mailer.sent?("texec.user@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+
+  # ===========================================================
+  # Test 86: a user with a permanent parking assignment already has standing
+  # access to their space, so any booking they make is ignored by the allocator
+  # — not allocated a (second) bookable space, not approved, not emailed — while
+  # their permanent gallagher access is still granted. Other users allocate as
+  # normal.
+  # ===========================================================
+
+  settings({
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  })
+  sleep 100.milliseconds
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([
+    # a free bookable space...
+    {id: "asset-book1", identifier: "BOOK1", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+     features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true},
+    # ...and a space permanently assigned to perm.user
+    {id: "asset-perm1", identifier: "PERM1", assigned_to: "perm.user@example.com", zones: ["zone-building", "zone-level-B3"],
+     features: ["Secure Basement"], notes: "Car", security_system_groups: [] of String, bookable: true},
+  ].to_json)
+  gallagher.set_cardholder("perm.user@example.com", "ch-perm")
+  gallagher.set_cardholder("regular.user@example.com", "ch-regular")
+  calendar.set_groups("perm.user@example.com", default_grp.to_json)
+  calendar.set_groups("regular.user@example.com", default_grp.to_json)
+
+  perm_start = now + 3600_i64 * 400
+  perm_end = perm_start + 3600_i64
+  staff.set_bookings([
+    # the permanently-assigned user also makes a booking — must be ignored
+    build_booking.call(88001_i64, "perm.user@example.com",
+      perm_start, perm_end, "unallocated-88001", false, ext_car),
+    # a regular user who should allocate as normal
+    build_booking.call(88002_i64, "regular.user@example.com",
+      perm_start, perm_end, "unallocated-88002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the permanent user's booking is completely ignored
+  staff.last_update_for(88001_i64).should be_nil
+  staff.approved.includes?(88001_i64).should eq(false)
+  mailer.any_sent_to?("perm.user@example.com").should eq(false)
+  # ...but their permanent gallagher access is still in place, and they were NOT
+  # granted the bookable space's group
+  perm_access = gallagher.access_for("ch-perm")
+  perm_access.should contain("gallagher-group3")
+  perm_access.should_not contain("gallagher-group1")
+
+  # the regular user allocates to the free bookable space as normal
+  staff.last_update_for(88002_i64).should eq("asset-book1")
+  mailer.sent?("regular.user@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+
+  # ===========================================================
+  # Electric Vehicle restriction (id 2). EV bookings only fit EV spaces (no
+  # regular-space fallback) and are rejected — not wait-listed — when none is
+  # free. EV spaces are the lowest-priority spaces for non-EV bookings, but may
+  # still be used by them.
+  # ===========================================================
+
+  ev_settings = {
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  }
+
+  # a regular bookable space + an EV space (both map to gallagher-group1 via
+  # "Open Basement"; the EV space additionally carries the "Electric Vehicle"
+  # feature). The EV space deliberately has the HIGHER zone preference
+  # ("carpriority" vs the regular space's "shared") so that only the EV-last rule
+  # can push it behind the regular space for non-EV bookings (Test 88).
+  ev_reg_space = {id: "asset-reg1", identifier: "REG1", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+                  features: ["shared", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true}
+  ev_ev_space = {id: "asset-ev1", identifier: "EV1", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+                 features: ["Electric Vehicle", "carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true}
+
+  ev_ext = {"vehicle_type" => JSON::Any.new("car"), "space_restrictions" => JSON::Any.new(2_i64)}
+
+  # -----------------------------------------------------------
+  # Test 87: an EV booking is allocated to the EV space even when a regular space
+  # is also free — it never takes a non-EV space.
+  # -----------------------------------------------------------
+
+  settings(ev_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([ev_reg_space, ev_ev_space].to_json)
+  gallagher.set_cardholder("ev.driver@example.com", "ch-evdriver")
+  calendar.set_groups("ev.driver@example.com", default_grp.to_json)
+
+  ev_start = now + 3600_i64 * 420
+  ev_end = ev_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(90001_i64, "ev.driver@example.com",
+      ev_start, ev_end, "unallocated-90001", false, ev_ext),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  staff.last_update_for(90001_i64).should eq("asset-ev1")
+  mailer.sent?("ev.driver@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+
+  # -----------------------------------------------------------
+  # Test 88: EV spaces are the last resort for non-EV bookings. Two overlapping
+  # regular bookings, higher priority first: the higher-priority one takes the
+  # regular space, the lower-priority one falls back to the EV space (proving a
+  # non-EV booking CAN use an EV space, but only after regular spaces run out).
+  # -----------------------------------------------------------
+
+  settings(ev_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([ev_reg_space, ev_ev_space].to_json)
+  gallagher.set_cardholder("hi.user@example.com", "ch-hi")
+  gallagher.set_cardholder("lo.user@example.com", "ch-lo")
+  # hi.user is in the top group; lo.user is in no group
+  calendar.set_groups("hi.user@example.com", [{id: "group-priority", email: "priority@grp.com"}].to_json)
+  calendar.set_groups("lo.user@example.com", [] of NamedTuple(id: String, email: String))
+
+  lr_start = now + 3600_i64 * 440
+  lr_end = lr_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(90101_i64, "hi.user@example.com",
+      lr_start, lr_end, "unallocated-90101", false, ext_car),
+    build_booking.call(90102_i64, "lo.user@example.com",
+      lr_start, lr_end, "unallocated-90102", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # higher priority gets the regular space; lower priority gets the EV space last
+  staff.last_update_for(90101_i64).should eq("asset-reg1")
+  staff.last_update_for(90102_i64).should eq("asset-ev1")
+
+  # -----------------------------------------------------------
+  # Test 89: an EV booking with NO EV space available is WAIT-LISTED — it is NOT
+  # allocated a regular space (no fallback) and NOT rejected.
+  # -----------------------------------------------------------
+
+  settings(ev_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  # only a regular space exists — no EV space at all
+  staff.set_assets([ev_reg_space].to_json)
+  gallagher.set_cardholder("ev.noev@example.com", "ch-evnoev")
+  calendar.set_groups("ev.noev@example.com", default_grp.to_json)
+
+  nr_start = now + 3600_i64 * 460
+  nr_end = nr_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(90201_i64, "ev.noev@example.com",
+      nr_start, nr_end, "unallocated-90201", false, ev_ext),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # wait-listed: never allocated the (non-EV) regular space, not approved
+  staff.last_update_for(90201_i64).should be_nil
+  staff.approved.includes?(90201_i64).should eq(false)
+  staff.last_state(90201_i64).should eq("wait_list")
+  mailer.sent?("ev.noev@example.com", "parking_request", "wait_list").should eq(true)
+
+  # -----------------------------------------------------------
+  # Test 90: an EV booking is WAIT-LISTED when the only EV space is already held
+  # by an equal-priority booking (nothing to preempt).
+  # -----------------------------------------------------------
+
+  settings(ev_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([ev_ev_space].to_json)
+  gallagher.set_cardholder("ev.first@example.com", "ch-evfirst")
+  gallagher.set_cardholder("ev.second@example.com", "ch-evsecond")
+  # both in no group => equal (priority 0), so the second can't preempt the first
+  calendar.set_groups("ev.first@example.com", [] of NamedTuple(id: String, email: String))
+  calendar.set_groups("ev.second@example.com", [] of NamedTuple(id: String, email: String))
+
+  bz_start = now + 3600_i64 * 480
+  bz_end = bz_start + 3600_i64
+  staff.set_bookings([
+    # 90301 is created earlier (lower id) so it wins the only EV space
+    build_booking.call(90301_i64, "ev.first@example.com",
+      bz_start, bz_end, "unallocated-90301", false, ev_ext),
+    build_booking.call(90302_i64, "ev.second@example.com",
+      bz_start, bz_end, "unallocated-90302", false, ev_ext),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # first takes the EV space; second is wait-listed (no EV space free, can't preempt)
+  staff.last_update_for(90301_i64).should eq("asset-ev1")
+  staff.last_update_for(90302_i64).should be_nil
+  staff.last_state(90302_i64).should eq("wait_list")
+  mailer.sent?("ev.second@example.com", "parking_request", "wait_list").should eq(true)
+
+  # ===========================================================
+  # Test 91: an unallocated booking with NO vehicle_type in extension_data is
+  # rejected (not allocated, not wait-listed) and a rejection email is sent. A
+  # booking that DOES carry a vehicle_type allocates as normal in the same run.
+  # ===========================================================
+
+  vt_settings = {
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Mezzanine"       => "gallagher-group2",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  }
+
+  vt_reg_space = {id: "asset-vt1", identifier: "VT1", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+                  features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true}
+  # a booking whose extension_data has no vehicle_type key at all
+  no_vehicle_ext = {"request_type" => JSON::Any.new("standard")}
+
+  settings(vt_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([vt_reg_space].to_json)
+  gallagher.set_cardholder("novt.user@example.com", "ch-novt")
+  gallagher.set_cardholder("hasvt.user@example.com", "ch-hasvt")
+  calendar.set_groups("novt.user@example.com", default_grp.to_json)
+  calendar.set_groups("hasvt.user@example.com", default_grp.to_json)
+
+  vt_start = now + 3600_i64 * 500
+  vt_end = vt_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(90401_i64, "novt.user@example.com",
+      vt_start, vt_end, "unallocated-90401", false, no_vehicle_ext),
+    build_booking.call(90402_i64, "hasvt.user@example.com",
+      vt_start, vt_end, "unallocated-90402", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the no-vehicle-type booking is rejected: not allocated, not wait-listed
+  staff.rejected?(90401_i64).should eq(true)
+  staff.last_update_for(90401_i64).should be_nil
+  staff.last_state(90401_i64).should eq("rejected")
+  mailer.sent?("novt.user@example.com", "parking_request", "rejected").should eq(true)
+  mailer.sent?("novt.user@example.com", "parking_request", "wait_list").should eq(false)
+
+  # the booking WITH a vehicle_type still allocates normally
+  staff.last_update_for(90402_i64).should eq("asset-vt1")
+  staff.rejected?(90402_i64).should eq(false)
+  mailer.sent?("hasvt.user@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+
+  # ===========================================================
+  # Test 92: an ALREADY-ALLOCATED booking with no vehicle_type is NOT rejected —
+  # the rejection only applies to bookings not yet allocated.
+  # ===========================================================
+
+  settings(vt_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([vt_reg_space].to_json)
+  gallagher.set_cardholder("alloc.novt@example.com", "ch-allocnovt")
+  calendar.set_groups("alloc.novt@example.com", default_grp.to_json)
+
+  av_start = now + 3600_i64 * 520
+  av_end = av_start + 3600_i64
+  # already on the space (asset-vt1), no vehicle_type
+  staff.set_bookings([
+    build_booking.call(90501_i64, "alloc.novt@example.com",
+      av_start, av_end, "asset-vt1", false, no_vehicle_ext),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # kept its allocation, approved, NOT rejected
+  staff.rejected?(90501_i64).should eq(false)
+  staff.approved.includes?(90501_i64).should eq(true)
+  mailer.sent?("alloc.novt@example.com", "parking_request", "rejected").should eq(false)
+  mailer.sent?("alloc.novt@example.com", "parking_request", "approved_gallagher-group1").should eq(true)
+
+  # ===========================================================
+  # Bike allocation regression suite (Tests 93-96)
+  #
+  # Investigates a production report of bike bookings being wait-listed while
+  # bike spaces are still free. Bikes carry NO restriction (height or otherwise);
+  # a bike space is distinguished ONLY by its notes ("Bike"/"Motor..."), a car
+  # space by "Car" (see VehicleType#matches_notes?). These tests exercise the
+  # full fleet: bikes must fill every free bike space, and the two vehicle types
+  # must never consume each other's inventory.
+  # ===========================================================
+
+  bike_settings = {
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+    ],
+  }
+
+  # a bookable, gallagher-mapped space. Car spaces are noted "Car" (Open Basement
+  # -> group1), bike spaces "Bike" (Secure Basement -> group3).
+  car_space = ->(id : String) do
+    {id: id, identifier: id.upcase, assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+     features: ["carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true}
+  end
+  bike_space = ->(id : String) do
+    {id: id, identifier: id.upcase, assigned_to: "", zones: ["zone-building", "zone-level-B3"],
+     features: ["bikepriority", "Secure Basement"], notes: "Bike", security_system_groups: [] of String, bookable: true}
+  end
+
+  # ===========================================================
+  # Test 93: several bikes fill EVERY free bike space (none wait-listed), and the
+  # presence of a free car space neither helps nor blocks them. This is the
+  # direct reproduction of the reported symptom.
+  # ===========================================================
+
+  settings(bike_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([
+    bike_space.call("asset-bike1"),
+    bike_space.call("asset-bike2"),
+    bike_space.call("asset-bike3"),
+    car_space.call("asset-car1"),
+  ].to_json)
+
+  bikers = {
+    93001_i64 => "b93a@example.com",
+    93002_i64 => "b93b@example.com",
+    93003_i64 => "b93c@example.com",
+  }
+  bikers.each do |_id, email|
+    gallagher.set_cardholder(email, "ch-#{email}")
+    calendar.set_groups(email, default_grp.to_json)
+  end
+
+  t93_start = now + 3600_i64 * 600
+  t93_end = t93_start + 3600_i64
+  staff.set_bookings(bikers.map { |id, email|
+    build_booking.call(id, email, t93_start, t93_end, "unallocated-#{id}", false, ext_bike)
+  }.to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # every bike landed a space, all distinct, and they are EXACTLY the three bike
+  # spaces (never the car space) — no bike wait-listed while bike spaces were free
+  allocated_93 = bikers.keys.map { |id| staff.last_update_for(id) }
+  allocated_93.each { |a| a.should_not be_nil }
+  allocated_93.to_set.should eq(["asset-bike1", "asset-bike2", "asset-bike3"].to_set)
+  bikers.each_value { |email| mailer.sent?(email, "parking_request", "wait_list").should eq(false) }
+
+  # ===========================================================
+  # Test 94: vehicle isolation — a bike is NOT rescued by a free car space, and a
+  # car is NOT rescued by a free bike space. Confirms "free spots still available"
+  # is correct behaviour when those spots are for the other vehicle type.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  # only a car space free, plus a bike booking
+  staff.set_assets([car_space.call("asset-car1")].to_json)
+  gallagher.set_cardholder("b94@example.com", "ch-b94")
+  calendar.set_groups("b94@example.com", default_grp.to_json)
+
+  t94_start = now + 3600_i64 * 620
+  t94_end = t94_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(94001_i64, "b94@example.com", t94_start, t94_end, "unallocated-94001", false, ext_bike),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the bike is wait-listed; the car space is left untouched (never given to a bike)
+  staff.last_update_for(94001_i64).should be_nil
+  staff.last_state(94001_i64).should eq("wait_list")
+  mailer.sent?("b94@example.com", "parking_request", "wait_list").should eq(true)
+
+  # reverse: only a bike space free, plus a car booking
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([bike_space.call("asset-bike1")].to_json)
+  gallagher.set_cardholder("c94@example.com", "ch-c94")
+  calendar.set_groups("c94@example.com", default_grp.to_json)
+
+  staff.set_bookings([
+    build_booking.call(94002_i64, "c94@example.com", t94_start, t94_end, "unallocated-94002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the car is wait-listed; the bike space is left untouched (never given to a car)
+  staff.last_update_for(94002_i64).should be_nil
+  staff.last_state(94002_i64).should eq("wait_list")
+  mailer.sent?("c94@example.com", "parking_request", "wait_list").should eq(true)
+
+  # ===========================================================
+  # Test 95: car overflow never eats into bike inventory. With the car spaces
+  # full, a surplus car booking wait-lists rather than consuming a bike space, so
+  # a later bike still finds a free bike space. This is the guard against the
+  # reported symptom being caused by cars poaching bike spaces.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([
+    car_space.call("asset-car1"),
+    bike_space.call("asset-bike1"),
+    bike_space.call("asset-bike2"),
+  ].to_json)
+  gallagher.set_cardholder("c95a@example.com", "ch-c95a")
+  gallagher.set_cardholder("c95b@example.com", "ch-c95b")
+  gallagher.set_cardholder("b95@example.com", "ch-b95")
+  calendar.set_groups("c95a@example.com", default_grp.to_json)
+  calendar.set_groups("c95b@example.com", default_grp.to_json)
+  calendar.set_groups("b95@example.com", default_grp.to_json)
+
+  t95_start = now + 3600_i64 * 640
+  t95_end = t95_start + 3600_i64
+  staff.set_bookings([
+    # two cars for one car space, and one bike
+    build_booking.call(95001_i64, "c95a@example.com", t95_start, t95_end, "unallocated-95001", false, ext_car),
+    build_booking.call(95002_i64, "c95b@example.com", t95_start, t95_end, "unallocated-95002", false, ext_car),
+    build_booking.call(95003_i64, "b95@example.com", t95_start, t95_end, "unallocated-95003", false, ext_bike),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # first car takes the only car space; the surplus car wait-lists (it is NOT
+  # handed a bike space); the bike still gets a bike space
+  staff.last_update_for(95001_i64).should eq("asset-car1")
+  staff.last_update_for(95002_i64).should be_nil
+  staff.last_state(95002_i64).should eq("wait_list")
+  ["asset-bike1", "asset-bike2"].includes?(staff.last_update_for(95003_i64)).should eq(true)
+  mailer.sent?("b95@example.com", "parking_request", "wait_list").should eq(false)
+
+  # ===========================================================
+  # Test 96: a mixed fleet with matching capacity is fully allocated — no false
+  # wait-listing when both types have exactly enough spaces.
+  # ===========================================================
+
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+  staff.set_assets([
+    car_space.call("asset-car1"),
+    car_space.call("asset-car2"),
+    bike_space.call("asset-bike1"),
+    bike_space.call("asset-bike2"),
+  ].to_json)
+  fleet = {
+    96001_i64 => {"c96a@example.com", ext_car},
+    96002_i64 => {"c96b@example.com", ext_car},
+    96003_i64 => {"b96a@example.com", ext_bike},
+    96004_i64 => {"b96b@example.com", ext_bike},
+  }
+  fleet.each do |_id, (email, _ext)|
+    gallagher.set_cardholder(email, "ch-#{email}")
+    calendar.set_groups(email, default_grp.to_json)
+  end
+
+  t96_start = now + 3600_i64 * 660
+  t96_end = t96_start + 3600_i64
+  staff.set_bookings(fleet.map { |id, (email, ext)|
+    build_booking.call(id, email, t96_start, t96_end, "unallocated-#{id}", false, ext)
+  }.to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # cars land on car spaces, bikes on bike spaces, all four allocated, none waitlisted
+  [96001_i64, 96002_i64].map { |id| staff.last_update_for(id) }.to_set.should eq(["asset-car1", "asset-car2"].to_set)
+  [96003_i64, 96004_i64].map { |id| staff.last_update_for(id) }.to_set.should eq(["asset-bike1", "asset-bike2"].to_set)
+  fleet.each_value { |(email, _ext)| mailer.sent?(email, "parking_request", "wait_list").should eq(false) }
+
+  # ===========================================================
+  # Test 97: bikes ignore height restrictions. A bike booking that carries a
+  # height class (e.g. the UI attaches one regardless of vehicle type) must still
+  # match bike spaces — which carry NO height feature — rather than being
+  # filtered out and wait-listed while bike spaces are free. Height enforcement
+  # for CARS is unchanged.
+  # ===========================================================
+
+  t97_settings = {
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {
+      "Open Basement"   => "gallagher-group1",
+      "Secure Basement" => "gallagher-group3",
+    },
+    request_space_restrictions: [
+      {id: 1, name: "ACROD"},
+      {id: 2, name: "Electric Vehicle"},
+      {id: 4, name: "Max height 1.95m"},
+      {id: 5, name: "Max height 2.1m"},
+    ],
+  }
+
+  settings(t97_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+
+  # a car space limited to 1.95m, plus a bike space with no height feature at all
+  short_car = {id: "asset-carshort", identifier: "CARSHORT", assigned_to: "", zones: ["zone-building", "zone-level-B1"],
+               features: ["Max height 1.95m", "carpriority", "Open Basement"], notes: "Car", security_system_groups: [] of String, bookable: true}
+  staff.set_assets([short_car, bike_space.call("asset-bike1")].to_json)
+
+  gallagher.set_cardholder("b97@example.com", "ch-b97")
+  gallagher.set_cardholder("c97@example.com", "ch-c97")
+  calendar.set_groups("b97@example.com", default_grp.to_json)
+  calendar.set_groups("c97@example.com", default_grp.to_json)
+
+  # a bike carrying a 2.1m height restriction, and a car carrying the same
+  ext_bike_h210 = {"vehicle_type" => JSON::Any.new("motorcycle"), "space_restrictions" => JSON::Any.new(5_i64)}
+
+  t97_start = now + 3600_i64 * 680
+  t97_end = t97_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(97001_i64, "b97@example.com", t97_start, t97_end, "unallocated-97001", false, ext_bike_h210),
+    build_booking.call(97002_i64, "c97@example.com", t97_start, t97_end, "unallocated-97002", false, ext_h210),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the bike ignores its height restriction and takes the (heightless) bike space
+  staff.last_update_for(97001_i64).should eq("asset-bike1")
+  mailer.sent?("b97@example.com", "parking_request", "wait_list").should eq(false)
+
+  # the car's 2.1m requirement is still enforced: the only car space is 1.95m, so
+  # it is wait-listed (bike height handling must not relax car height checks)
+  staff.last_update_for(97002_i64).should be_nil
+  staff.last_state(97002_i64).should eq("wait_list")
+  mailer.sent?("c97@example.com", "parking_request", "wait_list").should eq(true)
+
+  # ===========================================================
+  # Test 98: a Gallagher cardholder lookup is retried (like the directory group
+  # lookup) before the user is marked as a failed lookup for the run. A PERSISTENT
+  # Gallagher outage exhausts the retries and withholds the booking that sweep;
+  # because a failed lookup is never cached across sweeps, the next sweep retries
+  # and — once Gallagher recovers — allocates. A TRANSIENT blip that recovers
+  # within the retry budget allocates in the SAME sweep.
+  # ===========================================================
+
+  t98_settings = {
+    poll_rate:            999_999,
+    auto_approval_groups: ["group-priority", "group-default"],
+    car_zone_priority:    ["carpriority", "shared"],
+    bike_zone_priority:   ["bikepriority", "shared"],
+    parking_areas:        {"Open Basement" => "gallagher-group1"},
+    # retry twice, with no backoff, so the test doesn't actually sleep
+    cardholder_lookup_retries: 2,
+    cardholder_lookup_backoff: 0,
+  }
+  settings(t98_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+
+  staff.set_assets([car_space.call("asset-c98")].to_json)
+  gallagher.set_cardholder("cfail98@example.com", "ch-cfail98")
+  calendar.set_groups("cfail98@example.com", default_grp.to_json)
+  # Gallagher is down for this user for far more than the retry budget
+  gallagher.set_fail_lookups("cfail98@example.com", 100)
+
+  t98_start = now + 3600_i64 * 700
+  t98_end = t98_start + 3600_i64
+  staff.set_bookings([
+    build_booking.call(98001_i64, "cfail98@example.com", t98_start, t98_end, "unallocated-98001", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the lookup was attempted retries+1 times (initial + 2 retries) then gave up
+  gallagher.lookup_count("cfail98@example.com").should eq(3)
+  # with no resolvable card, the booking is withheld — the free space is untouched
+  staff.last_update_for(98001_i64).should be_nil
+
+  # --- Gallagher recovers ---
+  gallagher.set_fail_lookups("cfail98@example.com", 0)
+  staff.reset_calls
+  mailer.reset
+  staff.set_bookings([
+    build_booking.call(98001_i64, "cfail98@example.com", t98_start, t98_end, "unallocated-98001", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # the failed lookup was NOT cached across sweeps: it is retried and now succeeds,
+  # so the booking is allocated the free car space
+  gallagher.lookup_count("cfail98@example.com").should eq(4)
+  staff.last_update_for(98001_i64).should eq("asset-c98")
+
+  # --- a TRANSIENT blip that recovers within the retry budget (same sweep) ---
+  settings(t98_settings)
+  sleep 100.milliseconds
+  staff.reset_calls
+  mailer.reset
+  gallagher.reset
+
+  staff.set_assets([car_space.call("asset-c98b")].to_json)
+  gallagher.set_cardholder("ctrans98@example.com", "ch-ctrans98")
+  calendar.set_groups("ctrans98@example.com", default_grp.to_json)
+  # fails once, then recovers on the first retry
+  gallagher.set_fail_lookups("ctrans98@example.com", 1)
+
+  staff.set_bookings([
+    build_booking.call(98002_i64, "ctrans98@example.com", t98_start, t98_end, "unallocated-98002", false, ext_car),
+  ].to_json)
+  exec(:process_parking_bookings).get
+  sleep 100.milliseconds
+
+  # one failure + one successful retry, all within the single sweep
+  gallagher.lookup_count("ctrans98@example.com").should eq(2)
+  staff.last_update_for(98002_i64).should eq("asset-c98b")
 end
 
 # :nodoc:
@@ -2026,8 +4587,65 @@ class StaffAPIMock < DriverSpecs::MockDriver
   def reset_calls
     @updates = {} of Int64 => String
     @approved_set = [] of Int64
+    @rejected_set = [] of Int64
     @states = {} of String => String
     @fail_updates = [] of Int64
+    @update_instances = {} of Int64 => String
+    @approve_instances = {} of Int64 => String
+    @updates_by_instance = {} of String => String
+    @approved_instances = [] of String
+    @clash_updates = Set(String).new
+    @update_calls = {} of Int64 => Int32
+    @fail_query = false
+    @created_bookings = [] of JSON::Any
+    @created_ids = {} of String => Int64
+  end
+
+  # when true, query_bookings raises (simulating the staff API erroring)
+  @fail_query : Bool = false
+
+  def set_fail_query(value : Bool)
+    @fail_query = value
+  end
+
+  # (booking_id, asset_id) pairs the staff API should reject as a clashing
+  # booking (HTTP 409) — simulating a space booked outside the driver's view
+  @clash_updates : Set(String) = Set(String).new
+  # count of (successful) update_booking calls per booking id
+  @update_calls : Hash(Int64, Int32) = {} of Int64 => Int32
+
+  def clash_update_for(booking_id : Int64, asset_id : String)
+    @clash_updates << "#{booking_id}:#{asset_id}"
+  end
+
+  def update_count_for(booking_id : Int64) : Int32
+    @update_calls[booking_id]? || 0
+  end
+
+  # the `instance` param of the last update_booking / approve call per booking,
+  # recorded as .inspect ("nil" when the call was parent-level)
+  @update_instances : Hash(Int64, String) = {} of Int64 => String
+  @approve_instances : Hash(Int64, String) = {} of Int64 => String
+  # per-(booking, instance) records so recurring instances can be asserted
+  # independently
+  @updates_by_instance : Hash(String, String) = {} of String => String
+  @approved_instances : Array(String) = [] of String
+
+  def last_update_instance_for(booking_id : Int64) : String?
+    @update_instances[booking_id]?
+  end
+
+  def last_approve_instance_for(booking_id : Int64) : String?
+    @approve_instances[booking_id]?
+  end
+
+  # asset set by update_booking for a specific (booking, instance), nil if never called
+  def update_for(booking_id : Int64, instance : Int64?) : String?
+    @updates_by_instance["#{booking_id}:#{instance}"]?
+  end
+
+  def approved_instance?(booking_id : Int64, instance : Int64?) : Bool
+    @approved_instances.includes?("#{booking_id}:#{instance}")
   end
 
   # booking ids whose update_booking calls should fail (simulating the staff
@@ -2113,11 +4731,14 @@ class StaffAPIMock < DriverSpecs::MockDriver
     asset_id : String? = nil,
     limit : Int32? = nil,
   )
+    raise "simulated query_bookings failure" if @fail_query
     @last_query_period_end = period_end
 
     # overlay any persisted per-instance process_state, mirroring how the
     # backend reflects booking_state writes on the next fetch
-    bookings = JSON.parse(@bookings_json).as_a.map do |booking|
+    source = (JSON.parse(@bookings_json).as_a + @created_bookings)
+    source = source.select { |b| b["user_email"]?.try(&.as_s?) == email } if email
+    bookings = source.map do |booking|
       id = booking["id"].as_i64
       inst = booking["instance"]?.try(&.as_i64?)
       if state = @states[state_key(id, inst)]?
@@ -2137,6 +4758,57 @@ class StaffAPIMock < DriverSpecs::MockDriver
     found || JSON::Any.new({} of String => JSON::Any)
   end
 
+  # bookings created via create_booking this test (mirrors them into queries)
+  @created_bookings : Array(JSON::Any) = [] of JSON::Any
+  @created_ids : Hash(String, Int64) = {} of String => Int64
+  @next_created_id : Int64 = 90001_i64
+
+  # the id assigned to the booking created for a given user email (nil if none)
+  def created_id_for(email : String) : Int64?
+    @created_ids[email.downcase]?
+  end
+
+  def create_booking(
+    booking_type : String,
+    asset_id : String,
+    user_id : String,
+    user_email : String,
+    user_name : String,
+    zones : Array(String),
+    booking_start : Int64? = nil,
+    booking_end : Int64? = nil,
+    approved : Bool? = nil,
+    process_state : String? = nil,
+    extension_data : JSON::Any? = nil,
+    asset_ids : Array(String)? = nil,
+  )
+    id = @next_created_id
+    @next_created_id += 1
+    @created_ids[user_email.downcase] = id
+    booking = {
+      id:              id,
+      booking_type:    booking_type,
+      booking_start:   booking_start,
+      booking_end:     booking_end,
+      asset_id:        asset_id,
+      asset_ids:       asset_ids || [asset_id],
+      user_id:         user_id,
+      user_email:      user_email,
+      user_name:       user_name,
+      booked_by_email: user_email,
+      booked_by_name:  user_name,
+      zones:           zones,
+      created:         booking_start,
+      approved:        approved,
+      rejected:        false,
+      deleted:         false,
+      process_state:   process_state,
+      extension_data:  extension_data,
+    }
+    @created_bookings << JSON.parse(booking.to_json)
+    booking
+  end
+
   def update_booking(
     booking_id : String | Int64,
     booking_start : Int64? = nil,
@@ -2154,19 +4826,39 @@ class StaffAPIMock < DriverSpecs::MockDriver
   )
     id = booking_id.to_s.to_i64
     raise "simulated update_booking failure for #{id}" if @fail_updates.includes?(id)
+    if asset_id && @clash_updates.includes?("#{id}:#{asset_id}")
+      raise "issue updating booking #{id}: 409 Conflicting booking"
+    end
     if asset_id
       @updates[id] = asset_id
+      @update_instances[id] = instance.inspect
+      @updates_by_instance["#{id}:#{instance}"] = asset_id
+      @update_calls[id] = (@update_calls[id]? || 0) + 1
     end
     true
   end
 
   def approve(booking_id : String | Int64, instance : Int64? = nil)
-    @approved_set << booking_id.to_s.to_i64
+    id = booking_id.to_s.to_i64
+    @approved_set << id
+    @approve_instances[id] = instance.inspect
+    @approved_instances << "#{id}:#{instance}"
     true
   end
 
+  @rejected_set : Array(Int64) = [] of Int64
+
   def reject(booking_id : String | Int64, utm_source : String? = nil, instance : Int64? = nil)
+    @rejected_set << booking_id.to_s.to_i64
     true
+  end
+
+  def rejected : Array(Int64)
+    @rejected_set
+  end
+
+  def rejected?(booking_id : Int64) : Bool
+    @rejected_set.includes?(booking_id)
   end
 
   def booking_state(booking_id : String | Int64, state : String, instance : Int64? = nil)
@@ -2181,6 +4873,13 @@ class CalendarMock < DriverSpecs::MockDriver
   # email => full user JSON (with an unmapped object for directory id fields)
   @users : Hash(String, String) = {} of String => String
   @last_additional_fields : Array(String)? = nil
+  # count of get_groups calls per (downcased) user, so tests can assert the
+  # driver's priority cache avoids repeat lookups
+  @group_lookup_calls : Hash(String, Int32) = {} of String => Int32
+
+  def group_lookup_count(user : String) : Int32
+    @group_lookup_calls[user.downcase]? || 0
+  end
 
   def set_groups(user_email : String, groups_json : String)
     @groups[user_email.downcase] = groups_json
@@ -2190,7 +4889,21 @@ class CalendarMock < DriverSpecs::MockDriver
     @groups[user_email.downcase] = groups.to_json
   end
 
+  # remaining get_groups failures per user — each call decrements. Set a small
+  # number for a transient outage that recovers, or a large one for a persistent
+  # outage. 0 (or unset) always succeeds.
+  @fail_groups : Hash(String, Int32) = {} of String => Int32
+
+  def set_fail_groups(user_email : String, times : Int32)
+    @fail_groups[user_email.downcase] = times
+  end
+
   def get_groups(user_id : String)
+    @group_lookup_calls[user_id.downcase] = (@group_lookup_calls[user_id.downcase]? || 0) + 1
+    if (remaining = @fail_groups[user_id.downcase]?) && remaining > 0
+      @fail_groups[user_id.downcase] = remaining - 1
+      raise "simulated directory failure"
+    end
     raw = @groups[user_id.downcase]?
     raw ? JSON.parse(raw) : JSON.parse("[]")
   end
@@ -2266,6 +4979,23 @@ class GallagherMock < DriverSpecs::MockDriver
     @memberships = Hash(String, Array(Membership)).new
   end
 
+  # count of card_holder_id_lookup calls per (downcased) email, so tests can
+  # assert the driver's lookup cache avoids repeat queries
+  @lookup_calls : Hash(String, Int32) = {} of String => Int32
+
+  def lookup_count(email : String) : Int32
+    @lookup_calls[email.downcase]? || 0
+  end
+
+  # per-email count of remaining card_holder_id_lookup calls that should RAISE,
+  # simulating a transient (small count) or persistent (large count) Gallagher
+  # outage that the driver's SimpleRetry must ride out before giving up
+  @fail_lookups : Hash(String, Int32) = {} of String => Int32
+
+  def set_fail_lookups(email : String, times : Int32)
+    @fail_lookups[email.downcase] = times
+  end
+
   # zone ids the cardholder currently has any access to (de-duplicated)
   def access_for(cardholder_id : String) : Array(String)
     (@memberships[cardholder_id]? || [] of Membership).map(&.zone).uniq!
@@ -2288,6 +5018,11 @@ class GallagherMock < DriverSpecs::MockDriver
   end
 
   def card_holder_id_lookup(email : String)
+    @lookup_calls[email.downcase] = (@lookup_calls[email.downcase]? || 0) + 1
+    if (remaining = @fail_lookups[email.downcase]?) && remaining > 0
+      @fail_lookups[email.downcase] = remaining - 1
+      raise "simulated gallagher cardholder lookup failure for #{email}"
+    end
     @cardholders[email.downcase]?
   end
 
@@ -2346,13 +5081,20 @@ end
 class MailerMock < DriverSpecs::MockDriver
   include PlaceOS::Driver::Interface::Mailer
 
-  @sent : Array(NamedTuple(to: String, template: Tuple(String, String))) = [] of NamedTuple(to: String, template: Tuple(String, String))
+  @sent : Array(NamedTuple(to: String, template: Tuple(String, String), args: TemplateItems, attachments: Array(Attachment))) = [] of NamedTuple(to: String, template: Tuple(String, String), args: TemplateItems, attachments: Array(Attachment))
+  # when true, every send_template raises (simulating a mailer/SMTP failure)
+  @fail_send : Bool = false
+
+  def set_fail_send(value : Bool)
+    @fail_send = value
+  end
 
   def reset
-    @sent = [] of NamedTuple(to: String, template: Tuple(String, String))
+    @sent = [] of NamedTuple(to: String, template: Tuple(String, String), args: TemplateItems, attachments: Array(Attachment))
     self[:send_count] = 0
     self[:last_template] = nil
     self[:last_to] = nil
+    @fail_send = false
   end
 
   def last_template
@@ -2372,6 +5114,29 @@ class MailerMock < DriverSpecs::MockDriver
     @sent.any? { |s| s[:to] == to && s[:template] == {ns, name} }
   end
 
+  # was ANY email sent to this recipient since the last reset?
+  def any_sent_to?(to : String) : Bool
+    @sent.any? { |s| s[:to] == to }
+  end
+
+  # how many times a (to, template) pair was sent since the last reset
+  def times_sent(to : String, ns : String, name : String) : Int32
+    @sent.count { |s| s[:to] == to && s[:template] == {ns, name} }
+  end
+
+  # a template arg from the most recent (to, template) send (nil if none / unset)
+  def arg_for(to : String, ns : String, name : String, key : String) : String?
+    sent = @sent.reverse.find { |s| s[:to] == to && s[:template] == {ns, name} }
+    sent.try { |s| s[:args][key]?.try(&.to_s) }
+  end
+
+  # the decoded (base64) content of the first attachment on the most recent
+  # (to, template) send — the .ics body for a parking calendar invite, or nil
+  def attachment_for(to : String, ns : String, name : String) : String?
+    sent = @sent.reverse.find { |s| s[:to] == to && s[:template] == {ns, name} }
+    sent.try { |s| s[:attachments].first?.try { |a| Base64.decode_string(a[:content]) } }
+  end
+
   def send_template(
     to : String | Array(String),
     template : Tuple(String, String),
@@ -2383,8 +5148,9 @@ class MailerMock < DriverSpecs::MockDriver
     from : (String | Array(String))? = nil,
     reply_to : (String | Array(String))? = nil,
   )
+    raise "simulated mailer failure" if @fail_send
     recipient = to.is_a?(String) ? to : (to.first? || "")
-    @sent << {to: recipient, template: template}
+    @sent << {to: recipient, template: template, args: args, attachments: attachments}
     self[:last_template] = template
     self[:last_to] = recipient
     self[:send_count] = (self[:send_count]?.try(&.as_i) || 0) + 1
