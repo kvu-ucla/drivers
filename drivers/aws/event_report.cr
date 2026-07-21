@@ -12,11 +12,10 @@ class AWS::EventReport < PlaceOS::Driver
   uri_base "https://example.execute-api.us-west-2.amazonaws.com/stage"
 
   default_settings({
-    api_key:             "",      # Sent as the x-api-key header
-    default_encoding:    "plain", # "plain" or "base64"
-    refresh_cron:        "30 1 * * *",
-    timezone:            "America/Los_Angeles",
-    fetch_delay_seconds: 30, # Wait for the gateway to regenerate before fetching
+    api_key:          "",      # Sent as the x-api-key header
+    default_encoding: "plain", # "plain" or "base64"
+    fetch_cron:       "30 1 * * *",
+    timezone:         "America/Los_Angeles",
   })
 
   ENCODINGS = {"plain", "base64"}
@@ -26,13 +25,11 @@ class AWS::EventReport < PlaceOS::Driver
 
   @api_key : String = ""
   @default_encoding : String = "plain"
-  @fetch_delay : Int32 = 30
 
   def on_update
     @api_key = setting?(String, :api_key) || ""
     @default_encoding = setting?(String, :default_encoding) || "plain"
-    @fetch_delay = setting?(Int32, :fetch_delay_seconds) || 30
-    refresh_cron = setting?(String, :refresh_cron) || "30 1 * * *"
+    fetch_cron = setting?(String, :fetch_cron) || "30 1 * * *"
     timezone = setting?(String, :timezone) || "America/Los_Angeles"
 
     restore_cached_report
@@ -45,10 +42,10 @@ class AWS::EventReport < PlaceOS::Driver
     end
 
     schedule.clear
-    schedule.cron(refresh_cron, location) { nightly_refresh }
+    schedule.cron(fetch_cron, location) { fetch_report }
   end
 
-  # Triggers the gateway to regenerate the report
+  # Triggers the gateway to regenerate the report, then pulls the fresh copy
   def run_refresh
     response = post("/run",
       headers: {
@@ -61,7 +58,7 @@ class AWS::EventReport < PlaceOS::Driver
     if response.success?
       self[:last_run_at] = Time.utc.to_unix
       self[:run_response] = response.body
-      response.body
+      fetch_report
     else
       error = "report refresh failed: #{response.status_code} - #{response.body[0..500]}"
       self[:run_error] = error
@@ -97,13 +94,6 @@ class AWS::EventReport < PlaceOS::Driver
       logger.error { error }
       raise error
     end
-  end
-
-  # Regenerates the report then pulls the result, scheduled nightly
-  def nightly_refresh
-    run_refresh
-    sleep @fetch_delay.seconds unless @fetch_delay.zero?
-    fetch_report
   end
 
   private def restore_cached_report
