@@ -23,7 +23,7 @@ DriverSpecs.mock_driver "Crestron::PC300" do
   responds "\rOUTLet [<outlet #1-8>|ALL  OFF|ON]\r\n\r\nOutlets:\r\n\t1: ON\r\n\t2: OFF\r\n\t3: ON\r\n\t4: ON\r\n\t5: ON\r\n\t6: ON\r\n\t7: ON\r\n\t8: ON\r\n\r\nPC-300>"
 
   should_send "showhw\r\n"
-  responds "\rCurrent Hardware Configuration\r\n\tSystem type:    \tPC-300\r\n\tBoard revision: \t1\r\n\tSystem revision:\t0\r\n\r\nNonvolatile settings\r\n\tCRC:                  FFFFFFFF\r\n\tfrontPanelLocked:     0\r\n\r\nPC-300>"
+  responds "\rCurrent Hardware Configuration\r\n\tSystem type:    \tPC-300\r\n\tBoard revision: \t1\r\n\tSystem revision:\t0\r\n\r\nNonvolatile settings\r\n\tCRC:                  FFFFFFFF\r\n\tTmax: 105.0,  Vmax: 145, Vmin: 90,  Imax: 15\r\n\tsamplingInterval:      0:30 secs\r\n\tfrontPanelLocked:     0\r\n\r\nPC-300>"
 
   should_send "ver\r\n"
   responds "\rPC-300 [v1.3275.00047, #9EE28AE5]\r\n\r\nPC-300>"
@@ -51,6 +51,15 @@ DriverSpecs.mock_driver "Crestron::PC300" do
   status[:outlet_1].should eq(true)
   status[:outlet_2].should eq(false)
   status[:outlet_8].should eq(true)
+
+  # hardware config parsed into a flat object (comma-separated pairs split,
+  # section headers dropped, colons inside values preserved)
+  hardware = status[:hardware]
+  hardware["System type"].should eq("PC-300")
+  hardware["Board revision"].should eq("1")
+  hardware["Tmax"].should eq("105.0")
+  hardware["Vmax"].should eq("145")
+  hardware["samplingInterval"].should eq("0:30 secs")
 
   # device info assembled from showhw (model) and ver (firmware, id)
   device = status[:device_info]
@@ -85,6 +94,19 @@ DriverSpecs.mock_driver "Crestron::PC300" do
   status[:outlet_8].should eq(false)
   # state embedded in outlet_monitor stays in sync with the outlet poll
   status[:outlet_monitor]["outlet_1"]["state"].should eq(false)
+
+  # ====
+  # arbitrary console commands pass through and return the console output
+  result = exec(:send_command, "estatus")
+  should_send "estatus\r\n"
+  responds "\rEthernet Status\r\nLink: up 100 Mbps\r\n\r\nPC-300>"
+  result.get.not_nil!.as_s.should contain("Link: up 100 Mbps")
+
+  # ====
+  # reboot is fire-and-forget (the console drops without a prompt)
+  result = exec(:reboot)
+  should_send "reboot\r\n"
+  result.get
 
   # ====
   # monitor returns key/value sensor data (leading "# " stripped from keys)

@@ -282,6 +282,21 @@ class Crestron::PC300 < PlaceOS::Driver
     do_send "ver", name: "ver"
   end
 
+  # Reboot the PC-300 itself (not the outlets). The console drops without a
+  # prompt response, so this is fire-and-forget; the transport reconnects and
+  # the session re-establishes once the device is back.
+  def reboot
+    do_send "reboot", name: "reboot", wait: false
+  end
+
+  # Send any raw console command and return its output, e.g.
+  #   send_command("estatus")
+  # The command is serialised through the queue like any other and its response
+  # is whatever the console printed up to the next prompt.
+  def send_command(command : String)
+    do_send command, name: "manual_command"
+  end
+
   # =========================================================
   # Interface::DeviceInfo
   # =========================================================
@@ -343,9 +358,10 @@ class Crestron::PC300 < PlaceOS::Driver
       query_outlets
       task.try &.success(body)
     when "showhw"
-      self[:hardware] = body
-      cache_hardware_info(parse_key_values(body))
-      task.try &.success(body)
+      info = parse_hardware(body)
+      self[:hardware] = info
+      cache_hardware_info(info)
+      task.try &.success(info)
     when "monitor"
       sensors = parse_key_values(body)
       self[:sensors] = sensors
@@ -454,6 +470,25 @@ class Crestron::PC300 < PlaceOS::Driver
       combined["outlet_#{index}"] = info
     end
     self[:outlet_monitor] = combined
+  end
+
+  # showhw as a flat object. Lines can carry several comma-separated pairs
+  # ("Tmax: 105.0,  Vmax: 145, ...") so each line is split on commas first;
+  # section headers ("Nonvolatile settings") carry no value and are dropped.
+  # Colons inside values (URLs, "0:30 secs") survive: only the first colon of
+  # each segment splits key from value.
+  protected def parse_hardware(body : String)
+    pairs = {} of String => String
+    body.each_line do |line|
+      line.split(',').each do |segment|
+        key, _, value = segment.partition(":")
+        key = key.strip
+        value = value.strip
+        next if key.empty? || value.empty?
+        pairs[key] = value
+      end
+    end
+    pairs
   end
 
   # best-effort "Key: value" extraction for human-oriented console output;
