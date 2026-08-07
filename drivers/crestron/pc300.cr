@@ -24,7 +24,6 @@ class PlaceOS::Driver::TransportTCP < PlaceOS::Driver::Transport
       raise "cannot start tls while disconnected" if @socket.nil? || @socket.try(&.closed?)
 
       socket = @socket.as(TCPSocket)
-      socket.sync = true
 
       tls = context || begin
         ctx = OpenSSL::SSL::Context::Client.new
@@ -35,11 +34,32 @@ class PlaceOS::Driver::TransportTCP < PlaceOS::Driver::Transport
       tls.verify_mode = OpenSSL::SSL::VerifyMode::NONE
       @tls = tls
 
-      # hostname: nil => no SNI extension is sent
-      logger.debug { "PC-300 TLS patch active: no SNI, security level 0" }
-      @socket = OpenSSL::SSL::Socket::Client.new(socket, context: tls, sync_close: true, hostname: nil)
-      @tls_started = true
-      socket.sync = false
+      # The device's handshake is flaky between sessions: a failed attempt
+      # needs a beat before the next one can succeed, so immediate reconnects
+      # fail deterministically. Retry in-place with backoff (verified working
+      # cadence against a live unit) — each failure closes the TCP socket, so
+      # every retry dials a fresh one. Safe here: the transport's read fiber
+      # only spawns after start_tls returns.
+      attempt = 0
+      loop do
+        attempt += 1
+        begin
+          socket.sync = true
+          # hostname: nil => no SNI extension is sent
+          logger.debug { "PC-300 TLS patch active: no SNI, security level 0 (attempt #{attempt})" }
+          @socket = OpenSSL::SSL::Socket::Client.new(socket, context: tls, sync_close: true, hostname: nil)
+          @tls_started = true
+          socket.sync = false
+          break
+        rescue error : OpenSSL::SSL::Error | IO::Error
+          socket.close rescue nil
+          raise error if attempt >= 4
+          logger.debug { "TLS handshake attempt #{attempt} failed (#{error.message}); retrying" }
+          sleep 2.5.seconds
+          socket = TCPSocket.new(@ip, @port, connect_timeout: 10)
+          @socket = socket
+        end
+      end
     end
   end
 end
