@@ -42,18 +42,4 @@ module Zoom::ZRC
     )
     end
   end
-
-  # Per-key status delta broadcast by the gateway on the "zoom/{room_id}/status"
-  # channel. The gateway publishes one of these whenever a room's state changes;
-  # each room's logic module consumes them and reflects `value` into `self[key]`.
-  struct StatusUpdate
-    include JSON::Serializable
-
-    getter room_id : String
-    getter key : String
-    getter value : JSON::Any
-
-    def initialize(@room_id, @key, @value)
-    end
-  end
 end
