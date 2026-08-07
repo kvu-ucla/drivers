@@ -1,4 +1,9 @@
 require "placeos-driver"
+# Load the stock TCP transport BEFORE the patch below: Crystal's last method
+# definition wins, and placeos-driver requires transport/tcp late in its own
+# graph — without this, the framework's start_tls (which sends SNI) silently
+# overrides the patched version at compile time.
+require "placeos-driver/transport/tcp"
 
 # Crestron PC-300 / PC-200 power controller, driven over the secure console
 # (CTP over TLS, port 41797). Connection behaviour verified against a live
@@ -31,6 +36,7 @@ class PlaceOS::Driver::TransportTCP < PlaceOS::Driver::Transport
       @tls = tls
 
       # hostname: nil => no SNI extension is sent
+      logger.debug { "PC-300 TLS patch active: no SNI, security level 0" }
       @socket = OpenSSL::SSL::Socket::Client.new(socket, context: tls, sync_close: true, hostname: nil)
       @tls_started = true
       socket.sync = false
@@ -91,7 +97,15 @@ class Crestron::PC300 < PlaceOS::Driver
   def on_load
     queue.delay = 100.milliseconds
     transport.tokenizer = Tokenizer.new do |io|
-      buffer = String.new(io.to_slice)
+      bytes = io.to_slice
+      # the console can emit non-UTF-8 bytes which PCRE2 refuses to match.
+      # Substitute high bytes 1:1 with '?' — byte offsets are preserved (unlike
+      # String#scrub) and the ASCII-only patterns are unaffected.
+      sanitized = Bytes.new(bytes.size) do |i|
+        byte = bytes[i]
+        byte >= 0x80_u8 ? 0x3F_u8 : byte
+      end
+      buffer = String.new(sanitized)
       if match = TERMINATOR.match(buffer)
         match.byte_end(0)
       else
@@ -191,7 +205,8 @@ class Crestron::PC300 < PlaceOS::Driver
   # =========================================================
 
   def received(data, task)
-    data = String.new(data)
+    # scrub: the console can emit non-UTF-8 bytes; regex on invalid UTF-8 raises
+    data = String.new(data).scrub
     logger.debug { "received: #{data.inspect}" }
 
     # login phase: the device asked for credentials

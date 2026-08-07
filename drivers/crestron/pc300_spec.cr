@@ -15,7 +15,9 @@ DriverSpecs.mock_driver "Crestron::PC300" do
   should_send "admin\r\nsecret\r\n"
 
   # banner + prompt: session ready, driver auto-queries outlets, hardware, version
-  transmit "\r\nPC-300 Control Console\r\n\r\nPC-300>"
+  # (leading \xFF: the real console emits stray non-UTF-8 bytes; the driver must
+  # tokenize and parse around them rather than crash in regex matching)
+  transmit "\xFF\r\nPC-300 Control Console\r\n\r\nPC-300>"
 
   should_send "outlet\r\n"
   responds "\rOUTLet [<outlet #1-8>|ALL  OFF|ON]\r\n\r\nOutlets:\r\n\t1: ON\r\n\t2: OFF\r\n\t3: ON\r\n\t4: ON\r\n\t5: ON\r\n\t6: ON\r\n\t7: ON\r\n\t8: ON\r\n\r\nPC-300>"
