@@ -123,14 +123,40 @@ class Crestron::PC300 < PlaceOS::Driver
   end
 
   def connected
+    # NOTE: set_connected_state repaints fire this callback again (on a fresh
+    # fiber) - a real transport connect always arrives with @ready == false,
+    # so a ready session means this is just the repaint echo.
+    return if @ready
+
     # the device speaks first: either the banner + prompt, or the login cue.
     # received() drives the login phase; polling starts once ready.
     @login_attempts = 0
+
+    # report offline until the console actually speaks: the single-session
+    # device accepts TLS even when another session holds the console, so a bare
+    # socket proves nothing. Green in backoffice == console session ready.
+    set_connected_state(false)
+
     schedule.every(@poll_interval.seconds) { query_outlets if @ready }
     schedule.every(@monitor_interval.seconds) { monitor if @ready }
+
+    # single-session console: if another session holds it, the device accepts
+    # TLS but never sends the banner. Recycle the connection until we get one -
+    # a fresh session is what eventually claims the console once it frees up.
+    schedule.in(15.seconds) do
+      unless @ready
+        logger.warn { "no console banner within 15s of connect (session held elsewhere?) - reconnecting" }
+        transport.disconnect
+      end
+    end
   end
 
   def disconnected
+    # set_connected_state(false) repaints also fire this callback while the
+    # socket is still up; a REAL disconnect is distinguished by the queue being
+    # taken offline by the transport (status-only repaints never touch it)
+    return if queue.online
+
     schedule.clear
     @ready = false
     self[:ready] = false
@@ -224,6 +250,7 @@ class Crestron::PC300 < PlaceOS::Driver
     unless @ready
       @ready = true
       self[:ready] = true
+      set_connected_state(true) # console is interactive: show green in backoffice
       @login_attempts = 0
       query_outlets
       show_hardware
