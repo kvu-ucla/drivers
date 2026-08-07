@@ -57,10 +57,64 @@ class PlaceOS::Driver::TransportTCP < PlaceOS::Driver::Transport
           logger.debug { "TLS handshake attempt #{attempt} failed (#{error.message}); retrying" }
           sleep 2.5.seconds
           socket = TCPSocket.new(@ip, @port, connect_timeout: 10)
+          configure_socket_options(socket)
           @socket = socket
         end
       end
     end
+  end
+
+  # TCP-level options belong on the raw socket and must be applied BEFORE the
+  # TLS upgrade: the stock flow sets them afterwards via a stale local variable,
+  # which raises EBADF when a handshake retry has replaced the socket.
+  private def configure_socket_options(socket : TCPSocket, connect_timeout = 10) : Nil
+    socket.tcp_nodelay = true
+    socket.tcp_keepalive_idle = 60
+    socket.tcp_keepalive_interval = 30
+    socket.tcp_keepalive_count = 3
+    socket.keepalive = true
+    socket.write_timeout = connect_timeout.seconds
+  end
+
+  # Replaces the stock start_socket (copied from placeos-driver transport/tcp.cr
+  # - keep aligned on framework updates) to fix two defects in its TLS path:
+  #   1. it configures TCP options on a stale local after start_tls, which
+  #      raises EBADF once the handshake-retry path replaces the socket
+  #   2. it spawns the read fiber on the RAW socket, so with TLS the driver
+  #      receives ciphertext - the reader must consume from @socket, which is
+  #      the SSL wrapper after an upgrade
+  private def start_socket(connect_timeout)
+    handed_off = false
+    @mutex.synchronize do
+      @socket = socket = TCPSocket.new(@ip, @port, connect_timeout: connect_timeout)
+      configure_socket_options(socket, connect_timeout)
+
+      @tls_started = false
+      start_tls if @start_tls
+
+      # manually managed buffering; the raw socket under a TLS wrapper is
+      # handled inside start_tls
+      io = if @tls_started
+             @socket.as(OpenSSL::SSL::Socket::Client)
+           else
+             socket.sync = false
+             socket
+           end
+
+      # consume from the upgraded socket, not the raw one
+      spawn(same_thread: true, name: "tcp-consume") { consume_io(io) }
+      handed_off = true
+    end
+
+    # Signal connected state / enable queuing
+    set_connected_state(true)
+  rescue error
+    logger.info(exception: error) { "error connecting to device on #{@ip}:#{@port}" }
+    unless handed_off
+      @socket.try(&.close) rescue nil
+    end
+    set_connected_state(false)
+    raise error
   end
 end
 
