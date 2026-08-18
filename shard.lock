@@ -51,7 +51,7 @@ shards:
 
   connect-proxy:
     git: https://github.com/spider-gazelle/connect-proxy.git
-    version: 2.0.3
+    version: 2.0.5
 
   cookie_jar:
     git: https://github.com/mamantoha/http-cookie_jar.git
@@ -87,11 +87,11 @@ shards:
 
   dns:
     git: https://github.com/spider-gazelle/dns.git
-    version: 1.5.0
+    version: 1.6.1
 
   dtls:
     git: https://github.com/spider-gazelle/crystal-dtls.git
-    version: 0.9.2
+    version: 0.9.4
 
   ed25519:
     git: https://github.com/spider-gazelle/ed25519.git
@@ -251,7 +251,7 @@ shards:
 
   placeos-driver:
     git: https://github.com/placeos/driver.git
-    version: 8.0.2
+    version: 8.1.4
 
   placeos-log-backend:
     git: https://github.com/place-labs/log-backend.git
@@ -291,11 +291,11 @@ shards:
 
   redis:
     git: https://github.com/place-labs/crystal-redis.git
-    version: 2.9.2+git.commit.bdf446711222baa17ee60d40d915b626c1cb11f9
+    version: 2.9.2+git.commit.52e111ee3bbbdc41fbd3509398c08cc0e8e40e59
 
   redis-cluster:
     git: https://github.com/place-labs/redis-cluster.cr.git
-    version: 0.8.12
+    version: 0.8.13
 
   redis_service_manager:
     git: https://github.com/place-labs/redis_service_manager.git
@@ -335,7 +335,7 @@ shards:
 
   ssh2:
     git: https://github.com/spider-gazelle/ssh2.cr.git
-    version: 1.7.3
+    version: 1.8.0
 
   stomp:
     git: https://github.com/spider-gazelle/stomp.git
@@ -355,7 +355,7 @@ shards:
 
   tasker:
     git: https://github.com/spider-gazelle/tasker.git
-    version: 3.0.1
+    version: 3.1.0
 
   telnet:
     git: https://github.com/spider-gazelle/telnet.cr.git

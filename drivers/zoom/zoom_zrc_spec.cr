@@ -108,13 +108,103 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     status[:meeting_active].should eq(true)
   end
 
-  it "should mute audio via the mute query param" do
+  it "should join a meeting by url without the removed bring_share argument" do
+    result = exec(:join_meeting_by_url, "https://zoom.us/j/123456789")
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/meeting/join-url")
+      request.query_params["url"].should eq("https://zoom.us/j/123456789")
+      request.query_params.has_key?("bring_share").should be_false
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get
+    status[:meeting_active].should eq(true)
+  end
+
+  it "should turn on ai companion with the required features bitmask" do
+    result = exec(:ai_companion_on, 32)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/ai-companion/turn-on")
+      request.query_params["features"].should eq("32")
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get
+  end
+
+  it "should turn off ai companion with features and delete_assets" do
+    result = exec(:ai_companion_off, 32, true)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/ai-companion/turn-off")
+      request.query_params["features"].should eq("32")
+      request.query_params["delete_assets"].should eq("true")
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get
+  end
+
+  it "should answer an AI companion turn-on request without toggling directly" do
+    result = exec(:respond_to_ai_companion_request, 2, false)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/ai-companion/respond-to-turn-on")
+      request.query_params["agree"].should eq("false")
+      request.query_params.has_key?("delete_assets").should be_false
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get
+    status[:ai_companion_request]?.should be_nil
+  end
+
+  it "should answer an AI companion turn-off request with the asset choice" do
+    result = exec(:respond_to_ai_companion_request, 1, true, true)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/ai-companion/respond-to-turn-off")
+      request.query_params["agree"].should eq("true")
+      request.query_params["delete_assets"].should eq("true")
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get
+  end
+
+  it "should confirm the AI companion state shown when the host joins" do
+    result = exec(:confirm_ai_companion_status, false)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/ai-companion/confirm-status-when-join")
+      request.query_params["agree"].should eq("false")
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get
+    status[:ai_companion_confirm]?.should be_nil
+  end
+
+  it "should mute audio via the mute endpoint" do
     result = exec(:mute_audio, true)
 
     expect_http_request do |request, response|
       request.method.should eq("POST")
       request.path.should eq("/api/rooms/room-1/audio/mute")
-      request.query_params["mute"].should eq("true")
       response.status_code = 200
       response << %({})
     end
@@ -123,19 +213,46 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     status[:mic_mute].should eq(true)
   end
 
-  it "should stop (mute) video via the stop query param" do
+  it "should unmute audio via the unmute endpoint" do
+    result = exec(:mute_audio, false)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/audio/unmute")
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get.should eq(false)
+    status[:mic_mute].should eq(false)
+  end
+
+  it "should stop (mute) video via the mute endpoint" do
     result = exec(:mute_video, true)
 
     expect_http_request do |request, response|
       request.method.should eq("POST")
       request.path.should eq("/api/rooms/room-1/video/mute")
-      request.query_params["stop"].should eq("true")
       response.status_code = 200
       response << %({})
     end
 
     result.get.should eq(true)
     status[:camera_mute].should eq(true)
+  end
+
+  it "should start (unmute) video via the unmute endpoint" do
+    result = exec(:mute_video, false)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/video/unmute")
+      response.status_code = 200
+      response << %({})
+    end
+
+    result.get.should eq(false)
+    status[:camera_mute].should eq(false)
   end
 
   it "should set speaker volume" do
@@ -166,6 +283,151 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
 
     result.get
     status[:recording].should eq("started")
+  end
+
+  it "should surface a disclaimer gate without accepting it automatically" do
+    result = exec(:start_recording)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 409
+      response << %({"detail": {"message": "Recording disclaimer required before starting cloud recording", "precheck": {"disclaimer_check_result": 0, "disclaimer_needed": true}, "next_step": "POST /api/rooms/{room_id}/recording/prompt-disclaimer"}})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/prompt-disclaimer")
+      response.status_code = 200
+      response << %({"message": "Recording disclaimer prompt sent"})
+    end
+
+    response = result.get.not_nil!
+    response["recording_started"].should eq(false)
+    response["disclaimer_needed"].should eq(true)
+    status[:recording_disclaimer_needed].should eq(true)
+  end
+
+  it "should clear a stale disclaimer status when the wrapper reports false" do
+    result = exec(:check_recording_disclaimer)
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/recording/disclaimer-needed")
+      response.status_code = 200
+      response << %({"disclaimer_needed": false})
+    end
+
+    result.get.not_nil!["disclaimer_needed"].should eq(false)
+    status[:recording_disclaimer_needed]?.should be_nil
+  end
+
+  it "should only start after explicit disclaimer confirmation" do
+    first_start = exec(:start_recording, "recordings@example.edu")
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 409
+      response << %({"detail": {"message": "Recording disclaimer required before starting cloud recording", "precheck": {"disclaimer_check_result": 0, "disclaimer_needed": true}}})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/prompt-disclaimer")
+      response.status_code = 200
+      response << %({"message": "Recording disclaimer prompt sent"})
+    end
+
+    first_start.get.not_nil!["recording_started"].should eq(false)
+
+    confirmation = exec(:confirm_reminder, "REMINDER_TYPE_RECORDING_DISCLAIMER", true)
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/meeting/reminder/confirm-reminder")
+      body = JSON.parse(request.body.not_nil!)
+      body["is_agree"].should eq(true)
+      body["notification_type"].should eq("REMINDER_TYPE_RECORDING_DISCLAIMER")
+      response.status_code = 200
+      response << %({"result": 0, "success": true})
+    end
+
+    confirmation.get
+    status[:recording_disclaimer_needed]?.should be_nil
+
+    second_start = exec(:start_recording, "recordings@example.edu")
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 500
+      response << %({"detail": {"message": "Failed to start cloud recording", "error_code": 352, "error_name": "ZRCSDKERR_NOT_SET_RECORDING_NOTIFICATION_EMAIL"}})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/notification-email")
+      JSON.parse(request.body.not_nil!)["email"].should eq("recordings@example.edu")
+      response.status_code = 200
+      response << %({"message": "Notification email set to recordings@example.edu"})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 500
+      response << %({"detail": {"message": "Failed to start cloud recording", "error_code": 10, "error_name": "ZRCSDKERR_ALREADY_IN_THIS_STATE"}})
+    end
+
+    second_start.get
+    status[:recording].should eq("started")
+  end
+
+  # SDK error 352 (NOT_SET_RECORDING_NOTIFICATION_EMAIL) without the disclaimer
+  # gate: set the email and retry; ALREADY_IN_THIS_STATE (10) on the retry means
+  # the held start consumed the email and recording is already running.
+  it "should set the notification email and retry when the SDK reports 352" do
+    result = exec(:start_recording, "recordings@example.edu")
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 500
+      response << %({"detail": {"message": "Failed to start cloud recording", "error_code": 352, "error_name": "ZRCSDKERR_NOT_SET_RECORDING_NOTIFICATION_EMAIL"}})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/notification-email")
+      JSON.parse(request.body.not_nil!)["email"].should eq("recordings@example.edu")
+      response.status_code = 200
+      response << %({"message": "Notification email set to recordings@example.edu"})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 500
+      response << %({"detail": {"message": "Failed to start cloud recording", "error_code": 10, "error_name": "ZRCSDKERR_ALREADY_IN_THIS_STATE"}})
+    end
+
+    result.get
+    status[:recording].should eq("started")
+  end
+
+  # The email is caller-supplied, not stored: a 352 with no email to fall back
+  # on surfaces as an error rather than silently proceeding.
+  it "should raise on a 352 when no notification email was supplied" do
+    result = exec(:start_recording)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/recording/cloud/start")
+      response.status_code = 500
+      response << %({"detail": {"message": "Failed to start cloud recording", "error_code": 352, "error_name": "ZRCSDKERR_NOT_SET_RECORDING_NOTIFICATION_EMAIL"}})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /notification email/) do
+      result.get
+    end
   end
 
   it "should stop cloud recording" do

@@ -47,24 +47,23 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # methods below answer the prompt and clear the key. Enum/id values needed by
   # a response are read from the captured payload.
   PROMPT_EVENTS = {
-    "OnConsentNotification"                      => "consent_prompt",
-    "OnCombinedConsentNotification"              => "combined_consent_prompt",
-    "OnMeetingReminderNotification"              => "meeting_reminder",
-    "OnCustomizedReminderNotification"           => "customized_reminder",
-    "OnPrivacyAlertNotification"                 => "privacy_alert",
-    "OnInactiveDetectionNotification"            => "inactive_detection",
-    "OnReceiveRecordingRequest"                  => "recording_request",
-    "OnNeedPromptStartRecordingDisclaimerUpdate" => "recording_disclaimer_needed",
-    "OnAskUnmuteAudioByHostNotification"         => "ask_unmute_audio",
-    "OnAskStartVideoByHostNotification"          => "ask_start_video",
-    "OnJBHWaitingHostNotification"               => "waiting_for_host",
-    "OnEnableWaitingRoomOnEntryNotification"     => "waiting_room_on_entry",
-    "OnUpdateAdmitGuestEnableNotification"       => "admit_guest_enabled",
-    "OnMeetingWillReleaseAutomatically"          => "meeting_will_release",
-    "OnMeetingWillStopAutomatically"             => "meeting_will_stop",
-    "OnReceiveAICompanionRequest"                => "ai_companion_request",
-    "OnAICompanionStatusNeedConfirm"             => "ai_companion_confirm",
-    "OnIncomingMeetingShareNotification"         => "incoming_share",
+    "OnConsentNotification"                  => "consent_prompt",
+    "OnCombinedConsentNotification"          => "combined_consent_prompt",
+    "OnMeetingReminderNotification"          => "meeting_reminder",
+    "OnCustomizedReminderNotification"       => "customized_reminder",
+    "OnPrivacyAlertNotification"             => "privacy_alert",
+    "OnInactiveDetectionNotification"        => "inactive_detection",
+    "OnReceiveRecordingRequest"              => "recording_request",
+    "OnAskUnmuteAudioByHostNotification"     => "ask_unmute_audio",
+    "OnAskStartVideoByHostNotification"      => "ask_start_video",
+    "OnJBHWaitingHostNotification"           => "waiting_for_host",
+    "OnEnableWaitingRoomOnEntryNotification" => "waiting_room_on_entry",
+    "OnUpdateAdmitGuestEnableNotification"   => "admit_guest_enabled",
+    "OnMeetingWillReleaseAutomatically"      => "meeting_will_release",
+    "OnMeetingWillStopAutomatically"         => "meeting_will_stop",
+    "OnReceiveAICompanionRequest"            => "ai_companion_request",
+    "OnAICompanionStatusNeedConfirm"         => "ai_companion_confirm",
+    "OnIncomingMeetingShareNotification"     => "incoming_share",
   }
 
   @room_id : String = ""
@@ -78,6 +77,8 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   end
 
   def on_update
+    stop_event_stream
+
     @room_id = setting?(String, :room_id) || ""
     @activation_code = setting?(String, :activation_code) || ""
     @poll_interval = setting?(Int32, :poll_interval) || 30
@@ -92,6 +93,11 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     schedule.in(2.seconds) { poll }
 
     start_event_stream
+  end
+
+  def on_unload
+    schedule.clear
+    stop_event_stream
   end
 
   # =========================================================
@@ -196,8 +202,10 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     JSON.parse(response.body)
   end
 
+  # `url` is a required query param. The current ZRC SDK does not support
+  # bringing a local share into meetings joined by URL.
   def join_meeting_by_url(url : String) : JSON::Any
-    response = post("/api/rooms/#{@room_id}/meeting/join-url", headers: JSON_HEADERS)
+    response = post("/api/rooms/#{@room_id}/meeting/join-url", params: {"url" => url}, headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     self[:meeting_active] = true
     JSON.parse(response.body)
@@ -287,8 +295,12 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     when "waiting_for_host"
       # agree = keep waiting (prompt stays pending); deny = stop waiting
       cancel_waiting_for_host unless agree
-    when "ai_companion_request", "ai_companion_confirm"
-      agree ? ai_companion_on : ai_companion_off
+    when "ai_companion_request"
+      action_value = payload.dig?("info", "switchAction") || raise "ai companion payload missing switchAction"
+      action = action_value.as_s? || action_value.as_i? || raise "invalid AI companion switchAction"
+      respond_to_ai_companion_request(action, agree)
+    when "ai_companion_confirm"
+      confirm_ai_companion_status(agree)
     when "ask_unmute_audio"
       mute_audio(false) if agree
       self[:ask_unmute_audio] = nil
@@ -306,7 +318,14 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     response = post("/api/rooms/#{@room_id}/meeting/reminder/confirm-reminder", body: body, headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     self[:meeting_reminder] = nil
+    if recording_disclaimer?(notification_type)
+      self[:recording_disclaimer_needed] = agree ? nil : true
+    end
     JSON.parse(response.body)
+  end
+
+  private def recording_disclaimer?(notification_type : Int32 | String) : Bool
+    notification_type == RECORDING_DISCLAIMER || notification_type == RECORDING_DISCLAIMER_VALUE
   end
 
   def confirm_custom_reminder(notification_type : Int32 | String, agree : Bool = true) : JSON::Any
@@ -362,7 +381,8 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     response = get("/api/rooms/#{@room_id}/recording/disclaimer-needed", headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     data = JSON.parse(response.body)
-    self[:recording_disclaimer_needed] = data["disclaimer_needed"]?
+    needed = data["disclaimer_needed"]?.try(&.as_bool?) || false
+    self[:recording_disclaimer_needed] = needed ? true : nil
     data
   end
 
@@ -373,21 +393,58 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     JSON.parse(response.body)
   end
 
-  # Answer an AI Companion request/confirmation prompt.
-  def ai_companion_on : JSON::Any
-    response = post("/api/rooms/#{@room_id}/ai-companion/turn-on", headers: JSON_HEADERS)
+  # Directly turn on AI Companion features. The ZRC SDK accepts an Int64 bitmask
+  # (SmartSummary=32, SmartQuestion=64); SmartRecording cannot be turned on with
+  # this API.
+  def ai_companion_on(features : Int64) : JSON::Any
+    response = post("/api/rooms/#{@room_id}/ai-companion/turn-on", params: {"features" => features.to_s}, headers: JSON_HEADERS)
+    raise "request failed with #{response.status_code}" unless response.success?
+    JSON.parse(response.body)
+  end
+
+  # `delete_assets` discards any already-generated AI assets when turning off.
+  def ai_companion_off(features : Int64, delete_assets : Bool = false) : JSON::Any
+    response = post("/api/rooms/#{@room_id}/ai-companion/turn-off", params: {"features" => features.to_s, "delete_assets" => delete_assets.to_s}, headers: JSON_HEADERS)
+    raise "request failed with #{response.status_code}" unless response.success?
+    JSON.parse(response.body)
+  end
+
+  # Respond to a participant request. This is deliberately separate from the
+  # direct turn-on/turn-off operations: denying a request must not change state.
+  def respond_to_ai_companion_request(
+    switch_action : Int32 | Int64 | String,
+    agree : Bool = true,
+    delete_assets : Bool = false,
+  ) : JSON::Any
+    turn_on = ai_companion_turn_on_action?(switch_action)
+    path = turn_on ? "respond-to-turn-on" : "respond-to-turn-off"
+    params = {"agree" => agree.to_s}
+    params["delete_assets"] = delete_assets.to_s unless turn_on
+
+    response = post("/api/rooms/#{@room_id}/ai-companion/#{path}", params: params, headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     self[:ai_companion_request] = nil
+    JSON.parse(response.body)
+  end
+
+  # Confirm the AI Companion state that a participant changed before the host
+  # joined. This prompt has its own SDK operation and does not take a bitmask.
+  def confirm_ai_companion_status(agree : Bool = true) : JSON::Any
+    response = post("/api/rooms/#{@room_id}/ai-companion/confirm-status-when-join", params: {"agree" => agree.to_s}, headers: JSON_HEADERS)
+    raise "request failed with #{response.status_code}" unless response.success?
     self[:ai_companion_confirm] = nil
     JSON.parse(response.body)
   end
 
-  def ai_companion_off : JSON::Any
-    response = post("/api/rooms/#{@room_id}/ai-companion/turn-off", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    self[:ai_companion_request] = nil
-    self[:ai_companion_confirm] = nil
-    JSON.parse(response.body)
+  private def ai_companion_turn_on_action?(switch_action : Int32 | Int64 | String) : Bool
+    case switch_action
+    when 2, "AICompanionSwitchActionTurnOn", "turn_on"
+      true
+    when 1, "AICompanionSwitchActionTurnOff", "turn_off"
+      false
+    else
+      raise "unknown AI companion switch action: #{switch_action}"
+    end
   end
 
   # Stop waiting in the join-before-host state.
@@ -402,18 +459,21 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # Audio / Video (Interface::AudioMuteable, Interface::VideoMuteable)
   # =========================================================
 
-  # `mute` is a query param (boolean); there is no request body.
+  # Desired state lives in the path: /audio/mute vs /audio/unmute. No request
+  # body or query param — the verb endpoints mirror the wrapper's start/stop style.
   def mute_audio(state : Bool = true, index : Int32 | String = 0) : Bool
-    response = post("/api/rooms/#{@room_id}/audio/mute", params: {"mute" => state.to_s}, headers: JSON_HEADERS)
+    action = state ? "mute" : "unmute"
+    response = post("/api/rooms/#{@room_id}/audio/#{action}", headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     self[:mic_mute] = state
     state
   end
 
-  # `stop` is a required query param (boolean): stop=true mutes self video,
-  # stop=false starts it. Not a toggle, so the desired state is sent directly.
+  # /video/mute stops self video, /video/unmute starts it. Not a toggle, so the
+  # desired state is sent directly by picking the endpoint.
   def mute_video(state : Bool = true, index : Int32 | String = 0) : Bool
-    response = post("/api/rooms/#{@room_id}/video/mute", params: {"stop" => state.to_s}, headers: JSON_HEADERS)
+    action = state ? "mute" : "unmute"
+    response = post("/api/rooms/#{@room_id}/video/#{action}", headers: JSON_HEADERS)
     raise "request failed with #{response.status_code}" unless response.success?
     self[:camera_mute] = state
     state
@@ -442,12 +502,75 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # =========================================================
   # Cloud Recording
   # =========================================================
+  #
+  # Starting can be gated by account policy: the service 409s until a person
+  # accepts the in-room disclaimer, and the SDK refuses with 352 until a
+  # recording notification email is set. The driver may satisfy the email gate,
+  # but it never accepts the consent disclaimer on a person's behalf.
+  #
+  # `notification_email` is the address Zoom sends the recording link to. It is
+  # supplied by whoever starts the recording (not stored); it is only sent to
+  # the SDK if a gate actually demands it, so unrestricted accounts can start
+  # without one.
 
-  def start_recording : JSON::Any
+  RECORDING_DISCLAIMER       = "REMINDER_TYPE_RECORDING_DISCLAIMER"
+  RECORDING_DISCLAIMER_VALUE =   3
+  ERR_ALREADY_IN_THIS_STATE  =  10
+  ERR_RECORDING_EMAIL_UNSET  = 352
+
+  def start_recording(notification_email : String? = nil) : JSON::Any
     response = post("/api/rooms/#{@room_id}/recording/cloud/start", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    detail = error_detail(response)
+
+    if sdk_error_code(detail) == ERR_RECORDING_EMAIL_UNSET
+      raise "recording needs a notification email; call start_recording with notification_email" unless notification_email
+      set_recording_notification_email(notification_email)
+      response = post("/api/rooms/#{@room_id}/recording/cloud/start", headers: JSON_HEADERS)
+      detail = error_detail(response)
+    end
+
+    if response.status_code == 409 && disclaimer_gated?(detail)
+      prompt_recording_disclaimer
+      self[:recording_disclaimer_needed] = true
+      return JSON.parse(%({"message":"recording disclaimer confirmation required","recording_started":false,"disclaimer_needed":true}))
+    end
+
+    unless response.success? || sdk_error_code(detail) == ERR_ALREADY_IN_THIS_STATE
+      raise "start recording failed: #{response.status_code} #{response.body}"
+    end
+
+    self[:recording_disclaimer_needed] = nil
     self[:recording] = "started"
+    response.success? ? JSON.parse(response.body) : JSON.parse(%({"message":"cloud recording already started","recording_started":true}))
+  end
+
+  # Set the address Zoom emails the recording link to. Supplied by the caller.
+  def set_recording_notification_email(email : String) : JSON::Any
+    address = email.presence
+    raise "a notification email is required" unless address
+    body = {email: address}.to_json
+    response = post("/api/rooms/#{@room_id}/recording/notification-email", body: body, headers: JSON_HEADERS)
+    raise "request failed with #{response.status_code}" unless response.success?
     JSON.parse(response.body)
+  end
+
+  private def error_detail(response) : JSON::Any?
+    return nil if response.success?
+    JSON.parse(response.body)["detail"]?
+  rescue
+    nil
+  end
+
+  private def sdk_error_code(detail : JSON::Any?) : Int32?
+    detail.try(&.["error_code"]?).try(&.as_i?)
+  rescue
+    nil
+  end
+
+  private def disclaimer_gated?(detail : JSON::Any?) : Bool
+    !!detail.try(&.dig?("precheck", "disclaimer_needed")).try(&.as_bool?)
+  rescue
+    false
   end
 
   def stop_recording : JSON::Any
@@ -514,20 +637,35 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     return if setting?(Bool, :running_specs) # no live sockets under the spec harness
     @ws_generation += 1
     generation = @ws_generation
-    @socket.try(&.close)
-    spawn { run_event_stream(generation) }
+    room_id = @room_id
+    spawn { run_event_stream(generation, room_id) }
   end
 
-  private def run_event_stream(generation : Int32) : Nil
+  private def stop_event_stream : Nil
+    @ws_generation += 1
+    socket = @socket
+    @socket = nil
+    socket.try(&.close)
+  rescue e
+    logger.debug(exception: e) { "error closing event stream" }
+  end
+
+  private def run_event_stream(generation : Int32, room_id : String) : Nil
     while generation == @ws_generation
       begin
-        socket = HTTP::WebSocket.new(URI.parse("#{event_ws_base}/api/rooms/#{@room_id}/events"), ws_headers)
+        socket = HTTP::WebSocket.new(URI.parse("#{event_ws_base}/api/rooms/#{room_id}/events"), ws_headers)
+        unless generation == @ws_generation
+          socket.close
+          break
+        end
         @socket = socket
-        socket.on_message { |message| handle_event(message) }
-        logger.debug { "event stream connected for #{@room_id}" }
+        socket.on_message { |message| handle_event(message) if generation == @ws_generation }
+        logger.debug { "event stream connected for #{room_id}" }
         socket.run # blocks until the socket closes
       rescue e
-        logger.warn(exception: e) { "event stream error for #{@room_id}" }
+        logger.warn(exception: e) { "event stream error for #{room_id}" }
+      ensure
+        @socket = nil if @socket == socket
       end
       break unless generation == @ws_generation
       sleep 5.seconds
@@ -610,6 +748,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
                              "stopped"
                            end
       end
+    when "OnNeedPromptStartRecordingDisclaimerUpdate"
+      needed = event["need"]?.try(&.as_bool?) || false
+      self[:recording_disclaimer_needed] = needed ? true : nil
     when "OnUserJoin", "OnUserLeave", "OnInitMeetingParticipants", "OnMeetingParticipantsChanged"
       # roster changed; re-fetch the authoritative list over REST
       spawn { update_participants }
