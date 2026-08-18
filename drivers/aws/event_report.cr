@@ -14,7 +14,7 @@ class AWS::EventReport < PlaceOS::Driver
   default_settings({
     api_key:          "",      # Sent as the x-api-key header
     default_encoding: "plain", # "plain" or "base64"
-    fetch_cron:       "30 1 * * *",
+    fetch_cron:       "15 * * * *",
     timezone:         "America/Los_Angeles",
   })
 
@@ -42,7 +42,7 @@ class AWS::EventReport < PlaceOS::Driver
     end
 
     schedule.clear
-    schedule.cron(fetch_cron, location) { fetch_report }
+    schedule.cron(fetch_cron, location) { run_refresh }
   end
 
   # Triggers the gateway to regenerate the report, then pulls the fresh copy
