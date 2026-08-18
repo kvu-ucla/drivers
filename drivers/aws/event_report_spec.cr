@@ -22,6 +22,12 @@ DriverSpecs.mock_driver "AWS::EventReport" do
   status[:report_fetched_at].should eq 1700000000
 
   # ==========================================================================
+  # Test: without a fetch_cron setting the driver falls back to 15 past the
+  # hour and exposes the active cron as state
+  # ==========================================================================
+  status[:fetch_cron].should eq "15 * * * *"
+
+  # ==========================================================================
   # Test: run_refresh issues POST /run then immediately fetches the report
   # ==========================================================================
   refreshed_body = "REFRESHED: 8:30 AM - Registration, Lobby"
@@ -112,4 +118,18 @@ DriverSpecs.mock_driver "AWS::EventReport" do
 
   expect_raises(PlaceOS::Driver::RemoteException) { retval.get }
   status[:report_error].should_not be_nil
+
+  # ==========================================================================
+  # Test: a corrupt cached_report setting must not abort on_update before the
+  # cron schedule is registered
+  # ==========================================================================
+  settings({
+    api_key:       "test-api-key-123",
+    fetch_cron:    "45 * * * *",
+    cached_report: {report: "old shape, missing encoding and fetched_at"},
+  })
+  sleep 200.milliseconds
+
+  # on_update survived the bad cache and still reached schedule registration
+  status[:fetch_cron].should eq "45 * * * *"
 end

@@ -29,10 +29,8 @@ class AWS::EventReport < PlaceOS::Driver
   def on_update
     @api_key = setting?(String, :api_key) || ""
     @default_encoding = setting?(String, :default_encoding) || "plain"
-    fetch_cron = setting?(String, :fetch_cron) || "30 1 * * *"
+    fetch_cron = setting?(String, :fetch_cron) || "15 * * * *"
     timezone = setting?(String, :timezone) || "America/Los_Angeles"
-
-    restore_cached_report
 
     location = begin
       Time::Location.load(timezone)
@@ -43,6 +41,9 @@ class AWS::EventReport < PlaceOS::Driver
 
     schedule.clear
     schedule.cron(fetch_cron, location) { run_refresh }
+    self[:fetch_cron] = fetch_cron
+
+    restore_cached_report
   end
 
   # Triggers the gateway to regenerate the report, then pulls the fresh copy
@@ -99,6 +100,8 @@ class AWS::EventReport < PlaceOS::Driver
   private def restore_cached_report
     return unless cached = setting?(CachedReport, :cached_report)
     expose_report(cached)
+  rescue error
+    logger.warn(exception: error) { "ignoring unparsable cached_report setting" }
   end
 
   private def expose_report(cache : CachedReport)
