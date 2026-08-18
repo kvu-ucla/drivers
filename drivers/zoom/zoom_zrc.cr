@@ -47,23 +47,37 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # methods below answer the prompt and clear the key. Enum/id values needed by
   # a response are read from the captured payload.
   PROMPT_EVENTS = {
-    "OnConsentNotification"                  => "consent_prompt",
-    "OnCombinedConsentNotification"          => "combined_consent_prompt",
-    "OnMeetingReminderNotification"          => "meeting_reminder",
-    "OnCustomizedReminderNotification"       => "customized_reminder",
-    "OnPrivacyAlertNotification"             => "privacy_alert",
-    "OnInactiveDetectionNotification"        => "inactive_detection",
-    "OnReceiveRecordingRequest"              => "recording_request",
-    "OnAskUnmuteAudioByHostNotification"     => "ask_unmute_audio",
-    "OnAskStartVideoByHostNotification"      => "ask_start_video",
-    "OnJBHWaitingHostNotification"           => "waiting_for_host",
+    "OnConsentNotification"                       => "consent_prompt",
+    "OnCombinedConsentNotification"               => "combined_consent_prompt",
+    "OnConsolidatedCustomizedConsentNotification" => "consolidated_customized_consent_prompt",
+    "OnMeetingReminderNotification"               => "meeting_reminder",
+    "OnCustomizedReminderNotification"            => "customized_reminder",
+    "OnPrivacyAlertNotification"                  => "privacy_alert",
+    "OnInactiveDetectionNotification"             => "inactive_detection",
+    "OnReceiveRecordingRequest"                   => "recording_request",
+    "OnAskUnmuteAudioByHostNotification"          => "ask_unmute_audio",
+    "OnAskStartVideoByHostNotification"           => "ask_start_video",
+    "OnJBHWaitingHostNotification"                => "waiting_for_host",
+    "OnReceiveAICompanionRequest"                 => "ai_companion_request",
+    "OnAICompanionStatusNeedConfirm"              => "ai_companion_confirm",
+  }
+
+  # Notifications this driver currently exposes for observation only. They are
+  # deliberately kept out of confirm_prompt; adding close/extend/pin/admission
+  # controls is a separate API expansion from preserving these callbacks.
+  INFORMATIONAL_EVENTS = {
     "OnEnableWaitingRoomOnEntryNotification" => "waiting_room_on_entry",
     "OnUpdateAdmitGuestEnableNotification"   => "admit_guest_enabled",
-    "OnMeetingWillReleaseAutomatically"      => "meeting_will_release",
+    "OnInSilentModeNotification"             => "silent_mode",
     "OnMeetingWillStopAutomatically"         => "meeting_will_stop",
-    "OnReceiveAICompanionRequest"            => "ai_companion_request",
-    "OnAICompanionStatusNeedConfirm"         => "ai_companion_confirm",
     "OnIncomingMeetingShareNotification"     => "incoming_share",
+  }
+
+  # Auto-release is a calendar/room event emitted before a meeting starts. It
+  # must survive normal NotInMeeting reconciliation; otherwise the fallback
+  # poll erases it almost immediately. Room reset/unpair still clears it.
+  ROOM_INFORMATIONAL_EVENTS = {
+    "OnMeetingWillReleaseAutomatically" => "meeting_will_release",
   }
 
   @room_id : String = ""
@@ -71,6 +85,8 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   @poll_interval : Int32 = 30
   @socket : HTTP::WebSocket?
   @ws_generation = 0
+  @pending_meeting_password : String?
+  @meeting_password_attempted = false
 
   def on_load
     on_update
@@ -78,6 +94,11 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def on_update
     stop_event_stream
+
+    # Settings updates can move this driver instance to a different room. Never
+    # carry meeting prompts or a pending password across that boundary (or even
+    # across a reconnect of the same room).
+    reset_room_state
 
     @room_id = setting?(String, :room_id) || ""
     @activation_code = setting?(String, :activation_code) || ""
@@ -89,8 +110,10 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       return
     end
 
-    schedule.every(@poll_interval.seconds) { poll }
-    schedule.in(2.seconds) { poll }
+    unless setting?(Bool, :running_specs)
+      schedule.every(@poll_interval.seconds) { poll }
+      schedule.in(2.seconds) { poll }
+    end
 
     start_event_stream
   end
@@ -110,15 +133,27 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     raise "no activation_code provided or configured for this room" unless code
     body = PairRoomRequest.new(code).to_json
     response = post("/api/rooms/#{@room_id}/pair", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    data = parse_command_response(response, "pair room")
+    self[:paired] = true
+    if state = EventState.connection_state(data)
+      self[:connection_state] = state
+      self[:online] = EventState.connection_online?(data)
+    end
+    data
   end
 
   def unpair_room : JSON::Any
     response = post("/api/rooms/#{@room_id}/unpair", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "unpair room")
+    self[:paired] = false
     self[:online] = false
-    JSON.parse(response.body)
+    self[:connection_state] = nil
+    self[:room_status] = nil
+    self[:meeting_status] = nil
+    self[:meeting_active] = false
+    clear_meeting_session_state
+    clear_room_notifications
+    data
   end
 
   # =========================================================
@@ -127,60 +162,84 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def get_room_status : JSON::Any
     response = get("/api/rooms/#{@room_id}/status", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    data = JSON.parse(response.body)
+    data = parse_command_response(response, "get room status")
+    assert_zero_result(data, "get_state_result", "get room status")
     self[:room_status] = data
+    paired = data.as_h?.try(&.["paired"]?).try(&.as_bool?)
+    self[:paired] = paired unless paired.nil?
+    if state = EventState.connection_state(data)
+      self[:connection_state] = state
+      self[:online] = EventState.connection_online?(data)
+    end
     data
   end
 
   def get_connection_state : JSON::Any
     response = get("/api/rooms/#{@room_id}/pre-meeting/connection-state", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    data = JSON.parse(response.body)
-    self[:connection_state] = data
+    data = parse_command_response(response, "get connection state")
+    state = EventState.connection_state(data) || raise "invalid connection state response: #{response.body}"
+    self[:connection_state] = state
+    self[:online] = EventState.connection_online?(data)
     data
   end
 
   def get_meeting_status : JSON::Any
     response = get("/api/rooms/#{@room_id}/meeting/status", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    data = JSON.parse(response.body)
-    self[:meeting_status] = data
-    # Treat any non-empty/non-null response as an active meeting
-    self[:meeting_active] = !data.raw.nil? && data.raw != false
+    data = parse_command_response(response, "get meeting status")
+    meeting_status = EventState.meeting_status(data)
+    self[:meeting_status] = meeting_status
+    meeting_active = EventState.meeting_active?(data)
+    self[:meeting_active] = meeting_active
+    if meeting_active
+      clear_meeting_password_state
+    elsif EventState.meeting_session_ended?(meeting_status)
+      clear_meeting_session_state
+    end
     data
   end
 
   def get_volumes : Nil
-    speaker_resp = get("/api/rooms/#{@room_id}/settings/volume/speaker", headers: JSON_HEADERS)
-    if speaker_resp.success?
-      data = JSON.parse(speaker_resp.body)
-      self[:speaker_volume] = data["volume"]? || data
+    begin
+      fetch_volume("speaker", :speaker_volume)
+    rescue e
+      logger.warn(exception: e) { "speaker volume refresh failed" }
     end
 
-    mic_resp = get("/api/rooms/#{@room_id}/settings/volume/microphone", headers: JSON_HEADERS)
-    if mic_resp.success?
-      data = JSON.parse(mic_resp.body)
-      self[:microphone_volume] = data["volume"]? || data
+    begin
+      fetch_volume("microphone", :microphone_volume)
+    rescue e
+      logger.warn(exception: e) { "microphone volume refresh failed" }
     end
   end
 
   def list_rooms : JSON::Any
     response = get("/api/rooms", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    parse_command_response(response, "list rooms")
   end
 
   # Re-fetch this room's full state on demand.
   def refresh : Nil
-    get_connection_state
-    get_room_status
-    get_meeting_status
+    begin
+      get_connection_state
+    rescue e
+      logger.warn(exception: e) { "connection-state refresh failed" }
+      self[:online] = false
+      return
+    end
+
+    begin
+      get_room_status
+    rescue e
+      logger.warn(exception: e) { "room-status refresh failed" }
+    end
+
+    begin
+      get_meeting_status
+    rescue e
+      logger.warn(exception: e) { "meeting-status refresh failed" }
+    end
+
     get_volumes
-    self[:online] = true
-  rescue e
-    logger.warn(exception: e) { "refresh failed" }
-    self[:online] = false
   end
 
   # =========================================================
@@ -188,27 +247,41 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # =========================================================
 
   def start_instant_meeting : JSON::Any
+    prepare_meeting_join
     response = post("/api/rooms/#{@room_id}/meeting/start_instant", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    self[:meeting_active] = true
-    JSON.parse(response.body)
+    parse_command_response(response, "start instant meeting")
   end
 
   def join_meeting(meeting_number : String, password : String? = nil, bring_share : Bool = false) : JSON::Any
+    prepare_meeting_join
+    @pending_meeting_password = password.try(&.presence)
+    @meeting_password_attempted = false
     body = JoinMeetingRequest.new(meeting_number, password, bring_share).to_json
     response = post("/api/rooms/#{@room_id}/meeting/join", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    self[:meeting_active] = true
-    JSON.parse(response.body)
+    parse_command_response(response, "join meeting")
+  rescue e
+    clear_meeting_password_state
+    raise e
+  end
+
+  # Submit a password only after the SDK reports OnMeetingNeedsPasswordNotification.
+  # This is also public so a UI can retry with a corrected password after the SDK
+  # reports wrongAndRetry; the automatic path deliberately attempts a supplied
+  # join password only once to avoid locking the room through repeated retries.
+  def send_meeting_password(password : String) : JSON::Any
+    value = password.presence || raise "a meeting password is required"
+    @pending_meeting_password = value
+    @meeting_password_attempted = true
+    response = post("/api/rooms/#{@room_id}/meeting/password/send", params: {"password" => value}, headers: JSON_HEADERS)
+    parse_command_response(response, "send meeting password")
   end
 
   # `url` is a required query param. The current ZRC SDK does not support
   # bringing a local share into meetings joined by URL.
   def join_meeting_by_url(url : String) : JSON::Any
+    prepare_meeting_join
     response = post("/api/rooms/#{@room_id}/meeting/join-url", params: {"url" => url}, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    self[:meeting_active] = true
-    JSON.parse(response.body)
+    parse_command_response(response, "join meeting by URL")
   end
 
   def start_meeting(
@@ -219,11 +292,11 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     end_time : String? = nil,
     bring_share : Bool? = nil,
   ) : StartMeetingRequest
+    prepare_meeting_join
     body = StartMeetingRequest.new(meeting_number, meeting_name, host_name, start_time, end_time, bring_share).to_json
     response = post("/api/rooms/#{@room_id}/meeting/start", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    self[:meeting_active] = true
-    StartMeetingRequest.from_json(response.body)
+    data = parse_command_response(response, "start scheduled meeting")
+    StartMeetingRequest.from_json(data.to_json)
   end
 
   # =========================================================
@@ -234,16 +307,16 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # SDK's OnUpdateMeetingList callback, so allow its default 15s wait.
   def list_meetings : JSON::Any
     response = get("/api/rooms/#{@room_id}/meetings/list", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    data = JSON.parse(response.body)
+    data = parse_command_response(response, "list meetings")
+    assert_true_result(data, "request_success", "list meetings")
+    assert_true_result(data, "list_success", "list meetings")
     self[:meetings] = data["meetings"]?
     data
   end
 
   def exit_meeting : JSON::Any
     response = post("/api/rooms/#{@room_id}/meeting/exit", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    data = JSON.parse(response.body)
+    data = parse_command_response(response, "exit meeting")
     # Reconcile from the device rather than fabricating the post-exit cascade.
     get_meeting_status
     data
@@ -279,19 +352,26 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       consent_id = payload.dig?("info", "consent_id").try(&.as_s?) || ""
       confirm_consent(consent_type, agree, consent_id)
     when "combined_consent_prompt"
-      consent_type = payload.dig?("combinedConsent", "type").try(&.as_s?) || raise "combined consent payload missing type"
+      type_value = payload.dig?("combinedConsent", "type") || raise "combined consent payload missing type"
+      consent_type = type_value.as_s? || type_value.as_i? || raise "combined consent payload has invalid type"
       confirm_combined_consent(consent_type, agree)
+    when "consolidated_customized_consent_prompt"
+      agree_consolidated_customized_consent(agree)
     when "meeting_reminder"
       reminder_type = payload.dig?("reminderContent", "reminderType").try(&.as_s?) || raise "reminder payload missing type"
       confirm_reminder(reminder_type, agree)
     when "customized_reminder"
-      reminder_type = payload.dig?("customizedContent", "customizedDisclaimerType").try(&.as_s?) || raise "customized reminder payload missing type"
+      type_value = payload.dig?("customizedContent", "customizedDisclaimerType") || raise "customized reminder payload missing type"
+      reminder_type = type_value.as_s? || type_value.as_i? || raise "customized reminder payload has invalid type"
       confirm_custom_reminder(reminder_type, agree)
     when "recording_request"
       respond_to_recording_request(agree)
     when "inactive_detection"
-      continue_on_inactivity if agree
-      self[:inactive_detection] = nil
+      # The SDK only exposes a continue operation. A false response cannot be
+      # sent to Zoom, so preserve the prompt until Zoom hides it or the meeting
+      # ends rather than reporting a denial that never happened.
+      raise "inactive_detection does not support denial" unless agree
+      continue_on_inactivity
     when "waiting_for_host"
       # agree = keep waiting (prompt stays pending); deny = stop waiting
       cancel_waiting_for_host unless agree
@@ -302,11 +382,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     when "ai_companion_confirm"
       confirm_ai_companion_status(agree)
     when "ask_unmute_audio"
-      mute_audio(false) if agree
-      self[:ask_unmute_audio] = nil
+      answer_unmute_audio_request(agree)
     when "ask_start_video"
-      mute_video(false) if agree
-      self[:ask_start_video] = nil
+      answer_start_video_request(agree)
     else
       raise "#{prompt} is not a confirmable prompt"
     end
@@ -316,65 +394,94 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def confirm_reminder(notification_type : Int32 | String, agree : Bool = true) : JSON::Any
     body = {is_agree: agree, notification_type: notification_type}.to_json
     response = post("/api/rooms/#{@room_id}/meeting/reminder/confirm-reminder", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "confirm meeting reminder")
     self[:meeting_reminder] = nil
     if recording_disclaimer?(notification_type)
       self[:recording_disclaimer_needed] = agree ? nil : true
     end
-    JSON.parse(response.body)
+    data
   end
 
   private def recording_disclaimer?(notification_type : Int32 | String) : Bool
     notification_type == RECORDING_DISCLAIMER || notification_type == RECORDING_DISCLAIMER_VALUE
   end
 
-  def confirm_custom_reminder(notification_type : Int32 | String, agree : Bool = true) : JSON::Any
+  def confirm_custom_reminder(notification_type : Int32 | Int64 | String, agree : Bool = true) : JSON::Any
     body = {is_agree: agree, notification_type: notification_type}.to_json
     response = post("/api/rooms/#{@room_id}/meeting/reminder/confirm-custom-reminder", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "confirm customized reminder")
     self[:customized_reminder] = nil
-    JSON.parse(response.body)
+    data
   end
 
   def confirm_consent(consent_type : Int32 | String, agree : Bool = true, consent_id : String = "") : JSON::Any
     body = {is_agree: agree, consent_type: consent_type, consent_id: consent_id}.to_json
     response = post("/api/rooms/#{@room_id}/meeting/reminder/confirm-consent", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "confirm consent")
     self[:consent_prompt] = nil
-    JSON.parse(response.body)
+    data
   end
 
-  def confirm_combined_consent(notification_type : Int32 | String, agree : Bool = true) : JSON::Any
+  def confirm_combined_consent(notification_type : Int32 | Int64 | String, agree : Bool = true) : JSON::Any
     body = {is_agree: agree, notification_type: notification_type}.to_json
     response = post("/api/rooms/#{@room_id}/meeting/reminder/confirm-combined-consent", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "confirm combined consent")
     self[:combined_consent_prompt] = nil
-    JSON.parse(response.body)
+    data
+  end
+
+  # SDK 7.1 consolidated customized consent is distinct from the legacy
+  # combined-consent notification. Its callback carries the complete list of
+  # disclaimers and whether audio/video is blocked; the response only needs the
+  # user's decision.
+  def agree_consolidated_customized_consent(agree : Bool = true) : JSON::Any
+    body = {is_agree: agree}.to_json
+    response = post(
+      "/api/rooms/#{@room_id}/meeting/reminder/agree-consolidated-customized-consent",
+      body: body,
+      headers: JSON_HEADERS
+    )
+    data = parse_command_response(response, "agree to consolidated customized consent")
+    self[:consolidated_customized_consent_prompt] = nil
+    data
   end
 
   def handle_privacy_alert(privacy_alert_action : Int32 | String, privacy_alert_type : Int32 | String) : JSON::Any
     body = {privacy_alert_action: privacy_alert_action, privacy_alert_type: privacy_alert_type}.to_json
     response = post("/api/rooms/#{@room_id}/meeting/reminder/handle-privacy", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    self[:privacy_alert] = nil
-    JSON.parse(response.body)
+    data = parse_command_response(response, "handle privacy alert")
+    # SHOW/SHOW_DISCLAIMER are display transitions, not dismissals. Preserve
+    # the payload until a close action succeeds or Zoom emits a close callback.
+    self[:privacy_alert] = nil if privacy_alert_close_action?(privacy_alert_action)
+    data
+  end
+
+  private def privacy_alert_close_action?(action : Int32 | String) : Bool
+    action.in?(
+      0,
+      2,
+      4,
+      "PRIVACY_ALERT_ACTION_NONE",
+      "PRIVACY_ALERT_ACTION_CLOSE",
+      "PRIVACY_ALERT_ACTION_CLOSE_DISCLAIMER"
+    )
   end
 
   # Keep the meeting alive after an inactivity-detection prompt.
   def continue_on_inactivity : JSON::Any
     response = post("/api/rooms/#{@room_id}/meeting/reminder/continue-on-inactivity", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "continue after inactivity prompt")
     self[:inactive_detection] = nil
-    JSON.parse(response.body)
+    data
   end
 
   # Approve or deny a participant's recording request.
   def respond_to_recording_request(agree : Bool, persist : Bool = false) : JSON::Any
     body = {agree: agree, is_persist: persist}.to_json
     response = post("/api/rooms/#{@room_id}/recording/respond-to-request", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "respond to recording request")
     self[:recording_request] = nil
-    JSON.parse(response.body)
+    data
   end
 
   def check_recording_disclaimer : JSON::Any
@@ -389,8 +496,7 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # Show the start-recording disclaimer on the Zoom Room for in-room acceptance.
   def prompt_recording_disclaimer : JSON::Any
     response = post("/api/rooms/#{@room_id}/recording/prompt-disclaimer", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    parse_command_response(response, "prompt recording disclaimer")
   end
 
   # Directly turn on AI Companion features. The ZRC SDK accepts an Int64 bitmask
@@ -398,15 +504,13 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # this API.
   def ai_companion_on(features : Int64) : JSON::Any
     response = post("/api/rooms/#{@room_id}/ai-companion/turn-on", params: {"features" => features.to_s}, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    parse_command_response(response, "turn on AI Companion")
   end
 
   # `delete_assets` discards any already-generated AI assets when turning off.
   def ai_companion_off(features : Int64, delete_assets : Bool = false) : JSON::Any
     response = post("/api/rooms/#{@room_id}/ai-companion/turn-off", params: {"features" => features.to_s, "delete_assets" => delete_assets.to_s}, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    parse_command_response(response, "turn off AI Companion")
   end
 
   # Respond to a participant request. This is deliberately separate from the
@@ -422,18 +526,18 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     params["delete_assets"] = delete_assets.to_s unless turn_on
 
     response = post("/api/rooms/#{@room_id}/ai-companion/#{path}", params: params, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "respond to AI Companion request")
     self[:ai_companion_request] = nil
-    JSON.parse(response.body)
+    data
   end
 
   # Confirm the AI Companion state that a participant changed before the host
   # joined. This prompt has its own SDK operation and does not take a bitmask.
   def confirm_ai_companion_status(agree : Bool = true) : JSON::Any
     response = post("/api/rooms/#{@room_id}/ai-companion/confirm-status-when-join", params: {"agree" => agree.to_s}, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "confirm AI Companion status")
     self[:ai_companion_confirm] = nil
-    JSON.parse(response.body)
+    data
   end
 
   private def ai_companion_turn_on_action?(switch_action : Int32 | Int64 | String) : Bool
@@ -450,21 +554,47 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # Stop waiting in the join-before-host state.
   def cancel_waiting_for_host : JSON::Any
     response = post("/api/rooms/#{@room_id}/meeting/cancel-waiting-host", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "cancel waiting for host")
     self[:waiting_for_host] = nil
-    JSON.parse(response.body)
+    data
   end
 
   # =========================================================
   # Audio / Video (Interface::AudioMuteable, Interface::VideoMuteable)
   # =========================================================
 
+  # Answer a host prompt using the SDK's dedicated response API. This is not a
+  # generic self-unmute command: false must be sent so the host receives a deny.
+  def answer_unmute_audio_request(accepted : Bool) : JSON::Any
+    response = post(
+      "/api/rooms/#{@room_id}/audio/answer-unmute-request",
+      params: {"accepted" => accepted.to_s},
+      headers: JSON_HEADERS
+    )
+    data = parse_command_response(response, "answer host audio unmute request")
+    self[:ask_unmute_audio] = nil
+    data
+  end
+
+  # The Zoom SDK names this an "unmute video" response even though the room
+  # notification asks the user to start video.
+  def answer_start_video_request(accepted : Bool) : JSON::Any
+    response = post(
+      "/api/rooms/#{@room_id}/video/answer-unmute-request",
+      params: {"accepted" => accepted.to_s},
+      headers: JSON_HEADERS
+    )
+    data = parse_command_response(response, "answer host start video request")
+    self[:ask_start_video] = nil
+    data
+  end
+
   # Desired state lives in the path: /audio/mute vs /audio/unmute. No request
   # body or query param — the verb endpoints mirror the wrapper's start/stop style.
   def mute_audio(state : Bool = true, index : Int32 | String = 0) : Bool
     action = state ? "mute" : "unmute"
     response = post("/api/rooms/#{@room_id}/audio/#{action}", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    parse_command_response(response, "#{action} room audio")
     self[:mic_mute] = state
     state
   end
@@ -474,7 +604,7 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def mute_video(state : Bool = true, index : Int32 | String = 0) : Bool
     action = state ? "mute" : "unmute"
     response = post("/api/rooms/#{@room_id}/video/#{action}", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    parse_command_response(response, "#{action} room video")
     self[:camera_mute] = state
     state
   end
@@ -486,7 +616,10 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def set_speaker_volume(volume : Float64) : Float64
     body = {volume: volume}.to_json
     response = post("/api/rooms/#{@room_id}/settings/volume/speaker", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    parse_command_response(response, "set speaker volume")
+    # The SDK getter can lag immediately after a successful set. Publish the
+    # requested value now; OnCurrentSpeakerVolumeChanged is authoritative and
+    # will replace it if the room applies a different value.
     self[:speaker_volume] = volume
     volume
   end
@@ -494,7 +627,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def set_microphone_volume(volume : Float64) : Float64
     body = {volume: volume}.to_json
     response = post("/api/rooms/#{@room_id}/settings/volume/microphone", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    parse_command_response(response, "set microphone volume")
+    # Automatic gain control may adjust this asynchronously. The WebSocket event
+    # updates the status when that happens; an immediate GET can still be stale.
     self[:microphone_volume] = volume
     volume
   end
@@ -509,9 +644,8 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # but it never accepts the consent disclaimer on a person's behalf.
   #
   # `notification_email` is the address Zoom sends the recording link to. It is
-  # supplied by whoever starts the recording (not stored); it is only sent to
-  # the SDK if a gate actually demands it, so unrestricted accounts can start
-  # without one.
+  # supplied by whoever starts the recording (not stored) and is required before
+  # any remote request. It is only sent to the SDK if the email gate demands it.
 
   RECORDING_DISCLAIMER       = "REMINDER_TYPE_RECORDING_DISCLAIMER"
   RECORDING_DISCLAIMER_VALUE =   3
@@ -519,12 +653,12 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   ERR_RECORDING_EMAIL_UNSET  = 352
 
   def start_recording(notification_email : String? = nil) : JSON::Any
+    email = notification_email.try(&.presence) || raise "a recording notification email is required"
     response = post("/api/rooms/#{@room_id}/recording/cloud/start", headers: JSON_HEADERS)
     detail = error_detail(response)
 
     if sdk_error_code(detail) == ERR_RECORDING_EMAIL_UNSET
-      raise "recording needs a notification email; call start_recording with notification_email" unless notification_email
-      set_recording_notification_email(notification_email)
+      set_recording_notification_email(email)
       response = post("/api/rooms/#{@room_id}/recording/cloud/start", headers: JSON_HEADERS)
       detail = error_detail(response)
     end
@@ -535,13 +669,18 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       return JSON.parse(%({"message":"recording disclaimer confirmation required","recording_started":false,"disclaimer_needed":true}))
     end
 
-    unless response.success? || sdk_error_code(detail) == ERR_ALREADY_IN_THIS_STATE
-      raise "start recording failed: #{response.status_code} #{response.body}"
-    end
+    data = if response.success?
+             # Validate body-level failures before publishing optimistic state.
+             parse_command_response(response, "start cloud recording")
+           elsif sdk_error_code(detail) == ERR_ALREADY_IN_THIS_STATE
+             JSON.parse(%({"message":"cloud recording already started","recording_started":true}))
+           else
+             parse_command_response(response, "start cloud recording")
+           end
 
     self[:recording_disclaimer_needed] = nil
     self[:recording] = "started"
-    response.success? ? JSON.parse(response.body) : JSON.parse(%({"message":"cloud recording already started","recording_started":true}))
+    data
   end
 
   # Set the address Zoom emails the recording link to. Supplied by the caller.
@@ -550,8 +689,7 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     raise "a notification email is required" unless address
     body = {email: address}.to_json
     response = post("/api/rooms/#{@room_id}/recording/notification-email", body: body, headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    parse_command_response(response, "set recording notification email")
   end
 
   private def error_detail(response) : JSON::Any?
@@ -575,23 +713,31 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def stop_recording : JSON::Any
     response = post("/api/rooms/#{@room_id}/recording/cloud/stop", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    detail = error_detail(response)
+    data = if response.success?
+             parse_command_response(response, "stop cloud recording")
+           elsif sdk_error_code(detail) == ERR_ALREADY_IN_THIS_STATE
+             JSON.parse(%({"message":"cloud recording already stopped","recording_stopped":true}))
+           else
+             parse_command_response(response, "stop cloud recording")
+           end
+
     self[:recording] = "stopped"
-    JSON.parse(response.body)
+    data
   end
 
   def pause_recording : JSON::Any
     response = post("/api/rooms/#{@room_id}/recording/cloud/pause", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "pause cloud recording")
     self[:recording] = "paused"
-    JSON.parse(response.body)
+    data
   end
 
   def resume_recording : JSON::Any
     response = post("/api/rooms/#{@room_id}/recording/cloud/resume", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
+    data = parse_command_response(response, "resume cloud recording")
     self[:recording] = "started"
-    JSON.parse(response.body)
+    data
   end
 
   # =========================================================
@@ -600,8 +746,7 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def get_participants : JSON::Any
     response = get("/api/rooms/#{@room_id}/participants/", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    data = JSON.parse(response.body)
+    data = parse_command_response(response, "get participants")
     self[:participants] = data
     data
   end
@@ -612,14 +757,12 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
 
   def wake_up : JSON::Any
     response = post("/api/rooms/#{@room_id}/pre-meeting/wake-up", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    JSON.parse(response.body)
+    parse_command_response(response, "wake room")
   end
 
   def get_health : JSON::Any
     response = get("/health", headers: JSON_HEADERS)
-    raise "request failed with #{response.status_code}" unless response.success?
-    msg = JSON.parse(response.body)
+    msg = parse_command_response(response, "get wrapper health")
     self[:health] = msg
     msg
   end
@@ -634,7 +777,11 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # a slow fallback reconciler for anything missed while a socket was down.
 
   private def start_event_stream : Nil
-    return if setting?(Bool, :running_specs) # no live sockets under the spec harness
+    # Specs normally disable live sockets because config.uri points at the mock
+    # command server. A dedicated override lets event-ingestion specs exercise
+    # the real WebSocket and private handler without exposing a command that can
+    # inject events into production drivers.
+    return if setting?(Bool, :running_specs) && event_stream_uri.nil?
     @ws_generation += 1
     generation = @ws_generation
     room_id = @room_id
@@ -675,8 +822,12 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   # WebSocket base derived from the driver's configured HTTP uri (uri_base):
   # http -> ws, https -> wss. Keeps the event stream on the same host as commands.
   private def event_ws_base : String
-    base = (config.uri.try(&.to_s).presence || "http://localhost:8000").rchop("/")
+    base = (event_stream_uri || config.uri.try(&.to_s).presence || "http://localhost:8000").rchop("/")
     base.sub(/\Ahttps?/) { |scheme| scheme == "https" ? "wss" : "ws" }
+  end
+
+  private def event_stream_uri : String?
+    setting?(String, :event_stream_uri).try(&.presence)
   end
 
   private def ws_headers : HTTP::Headers
@@ -707,23 +858,82 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       logger.warn { "event stream dropped #{event["count"]?} events; resyncing" }
       spawn { refresh }
     when "OnUpdateMeetingStatus"
-      meeting_status = event["status"]?.try(&.as_s)
-      self[:meeting_status] = meeting_status
-      # exact match required: "MeetingStatusNotInMeeting" also ends in "InMeeting"
-      self[:meeting_active] = meeting_status == "MeetingStatusInMeeting"
+      if status_payload = event["status"]?
+        if meeting_status = EventState.meeting_status(status_payload)
+          self[:meeting_status] = meeting_status
+          # Exact match required: "MeetingStatusNotInMeeting" also ends in
+          # "InMeeting". Transient states such as waiting-for-host are not an
+          # active meeting, but must not erase the prompt that explains them.
+          meeting_active = meeting_status == "MeetingStatusInMeeting"
+          self[:meeting_active] = meeting_active
+          if meeting_active
+            clear_meeting_password_state
+          elsif EventState.meeting_session_ended?(meeting_status)
+            clear_meeting_session_state
+          end
+        end
+      end
     when "OnZRConnectionStateChanged"
       state = event["state"]?.try(&.as_s)
       self[:connection_state] = state
       self[:online] = state == "ConnectionStateConnected"
     when "OnConfReadyNotification"
-      self[:meeting_active] = true
+      # Ready is not the same as in-meeting. Reconcile from the authoritative
+      # status endpoint instead of fabricating an active meeting.
+      spawn { reconcile_meeting_status }
     when "OnExitMeetingNotification"
+      result = event["result"]?.try(&.as_i?)
+      if result.nil? || result == 0
+        self[:meeting_status] = "MeetingStatusNotInMeeting"
+        self[:meeting_active] = false
+        clear_meeting_session_state
+      else
+        # A failed exit callback is not evidence that the room left. Ask the
+        # authoritative status endpoint instead of fabricating an inactive state.
+        spawn { reconcile_meeting_status }
+      end
+    when "OnMeetingErrorNotification"
+      # Join/start commands are asynchronous: result 0 only means the Zoom Room
+      # accepted the command. Preserve the SDK's authoritative failure details
+      # even when the subsequent NotInMeeting/exit events clear session state.
+      self[:meeting_error] = event["errorInfo"]? || event
+    when "OnMeetingEndedNotification"
+      self[:meeting_ended] = event["errorInfo"]? || event
+      self[:meeting_status] = "MeetingStatusNotInMeeting"
       self[:meeting_active] = false
+      clear_meeting_session_state
+    when "OnMeetingNeedsPasswordNotification"
+      show = event["showPasswordDialog"]?.try(&.as_bool?) || false
+      wrong_and_retry = event["wrongAndRetry"]?.try(&.as_bool?) || false
+      if show
+        self[:meeting_password_required] = event
+        if (password = @pending_meeting_password) && !@meeting_password_attempted && !wrong_and_retry
+          # Mark before spawning so duplicate SDK notifications cannot submit the
+          # same password twice and risk incrementing the room's lockout counter.
+          @meeting_password_attempted = true
+          spawn do
+            send_meeting_password(password)
+          rescue e
+            logger.warn(exception: e) { "automatic meeting password submission failed" }
+          end
+        end
+      else
+        clear_meeting_password_state
+      end
+    when "OnConfDeviceLockStatusNotification"
+      self[:meeting_password_lock_status] = event["lockStatus"]? || event
     when "OnPairRoomResult"
       self[:paired] = event["result"]?.try(&.as_i?) == 0
     when "OnRoomUnpairedReason"
+      self[:room_unpaired_reason] = event["reason"]? || event
       self[:paired] = false
       self[:online] = false
+      self[:connection_state] = nil
+      self[:room_status] = nil
+      self[:meeting_status] = nil
+      self[:meeting_active] = false
+      clear_meeting_session_state
+      clear_room_notifications
     when "OnUpdateMyAudioStatus"
       muted = event.dig?("audioStatus", "isMuted").try(&.as_bool?)
       self[:mic_mute] = muted unless muted.nil?
@@ -751,8 +961,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     when "OnNeedPromptStartRecordingDisclaimerUpdate"
       needed = event["need"]?.try(&.as_bool?) || false
       self[:recording_disclaimer_needed] = needed ? true : nil
-    when "OnUserJoin", "OnUserLeave", "OnInitMeetingParticipants", "OnMeetingParticipantsChanged"
-      # roster changed; re-fetch the authoritative list over REST
+    when "OnUserJoin", "OnUserLeave", "OnUserUpdate", "OnInitMeetingParticipants", "OnMeetingParticipantsChanged"
+      # Roster changed; OnUserUpdate also carries waiting-room/silent-mode
+      # participant changes. Re-fetch the authoritative list over REST.
       spawn { update_participants }
     when "OnUpdateMeetingList"
       # fires when the calendar list changes or a ListMeeting request resolves;
@@ -765,6 +976,10 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       self[:calendar_delete_result] = event["result"]?
     else
       if event_name && (key = PROMPT_EVENTS[event_name]?)
+        self[key] = EventState.actionable_prompt?(event_name, event) ? event : nil
+      elsif event_name && (key = INFORMATIONAL_EVENTS[event_name]?)
+        self[key] = event
+      elsif event_name && (key = ROOM_INFORMATIONAL_EVENTS[event_name]?)
         self[key] = event
       else
         logger.debug { "unhandled room event: #{message}" }
@@ -780,16 +995,110 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     logger.warn(exception: e) { "participant refresh failed" }
   end
 
+  private def reconcile_meeting_status : Nil
+    get_meeting_status
+  rescue e
+    logger.warn(exception: e) { "meeting status reconciliation failed" }
+  end
+
+  private def clear_meeting_notifications : Nil
+    PROMPT_EVENTS.each_value { |key| self[key] = nil }
+    INFORMATIONAL_EVENTS.each_value { |key| self[key] = nil }
+  end
+
+  private def clear_room_notifications : Nil
+    ROOM_INFORMATIONAL_EVENTS.each_value { |key| self[key] = nil }
+  end
+
+  private def clear_meeting_session_state : Nil
+    clear_meeting_password_state
+    clear_meeting_notifications
+    self[:participants] = nil
+    self[:recording] = "stopped"
+    self[:recording_info] = nil
+    self[:recording_disclaimer_needed] = nil
+  end
+
+  private def reset_room_state : Nil
+    clear_meeting_session_state
+    clear_room_notifications
+    self[:meeting_error] = nil
+    self[:meeting_ended] = nil
+    self[:meeting_password_lock_status] = nil
+    self[:paired] = false
+    self[:online] = false
+    self[:room_status] = nil
+    self[:connection_state] = nil
+    self[:meeting_status] = nil
+    self[:meeting_active] = false
+  end
+
+  private def clear_meeting_password_state : Nil
+    @pending_meeting_password = nil
+    @meeting_password_attempted = false
+    self[:meeting_password_required] = nil
+  end
+
+  private def prepare_meeting_join : Nil
+    clear_meeting_password_state
+    self[:meeting_error] = nil
+    self[:meeting_ended] = nil
+    self[:meeting_password_lock_status] = nil
+  end
+
+  private def fetch_volume(kind : String, status_key : Symbol) : Float64
+    response = get("/api/rooms/#{@room_id}/settings/volume/#{kind}", headers: JSON_HEADERS)
+    data = parse_command_response(response, "get #{kind} volume")
+    raw_volume = data.as_h?.try(&.["volume"]?) || data
+    volume = raw_volume.as_f? || raw_volume.as_i?.try(&.to_f)
+    raise "invalid #{kind} volume response: #{response.body}" unless volume
+    self[status_key] = volume
+    volume
+  end
+
+  private def parse_command_response(response, operation : String) : JSON::Any
+    unless response.success?
+      raise "#{operation} failed: HTTP #{response.status_code}: #{response.body}"
+    end
+
+    data = JSON.parse(response.body)
+    if data.as_h?.try(&.["success"]?).try(&.as_bool?) == false
+      raise "#{operation} failed: #{response.body}"
+    end
+    data
+  end
+
+  private def assert_true_result(data : JSON::Any, key : String, operation : String) : Nil
+    if data.as_h?.try(&.[key]?).try(&.as_bool?) == false
+      raise "#{operation} failed: #{data.to_json}"
+    end
+  end
+
+  private def assert_zero_result(data : JSON::Any, key : String, operation : String) : Nil
+    if (result = data.as_h?.try(&.[key]?).try(&.as_i?)) && result != 0
+      raise "#{operation} failed: #{data.to_json}"
+    end
+  end
+
   # =========================================================
   # Polling (fallback reconciler)
   # =========================================================
 
   private def poll : Nil
-    get_room_status
-    get_meeting_status
-    self[:online] = true
-  rescue e
-    logger.warn(exception: e) { "poll failed" }
-    self[:online] = false
+    begin
+      # get_room_status derives online from the SDK connection state. A healthy
+      # wrapper HTTP response alone must never mark a disconnected room online.
+      get_room_status
+    rescue e
+      logger.warn(exception: e) { "room-status poll failed" }
+      self[:online] = false
+      return
+    end
+
+    begin
+      get_meeting_status
+    rescue e
+      logger.warn(exception: e) { "meeting-status poll failed" }
+    end
   end
 end
