@@ -36,7 +36,7 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
 
     def to_api_uri : String
       case self
-      when .hdmi1?, hdmi?
+      when .hdmi1?, .hdmi?
         "extInput:hdmi?port=1"
       when .hdmi2?
         "extInput:hdmi?port=2"
@@ -92,6 +92,10 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
   end
 
   include Interface::InputSelection(Input)
+
+  # error codes the display returns during normal operation:
+  # 40005 = display is in standby, 7 = no content active (e.g. home screen)
+  EXPECTED_ERROR_CODES = {7, 40005}
 
   @psk : String = "1234"
 
@@ -165,13 +169,10 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       }.to_json
     )
 
-    if !response.success?
-      error = "getInterfaceInformation command failed: #{response.body}"
-      logger.warn { error }
-      raise error
-    end
+    result = parse_result(response, "getInterfaceInformation")
+    raise "getInterfaceInformation command failed: #{response.body}" unless result
 
-    Array(SonyInterface).from_json(response.body, root: "result").first
+    Array(SonyInterface).from_json(result.to_json).first
   end
 
   def device_info : Descriptor
@@ -187,13 +188,10 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       }.to_json
     )
 
-    if !response.success?
-      error = "getSystemInformation command failed: #{response.body}"
-      logger.warn { error }
-      raise error
-    end
+    result = parse_result(response, "getSystemInformation")
+    raise "getSystemInformation command failed: #{response.body}" unless result
 
-    details = Array(SonyDescriptor).from_json(response.body, root: "result").first
+    details = Array(SonyDescriptor).from_json(result.to_json).first
     ip_address = config.ip.presence || URI.parse(config.uri.as(String)).hostname
 
     Descriptor.new(
@@ -208,24 +206,21 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
 
   # Power Control
   def power(state : Bool)
-    method = state ? "setPowerStatus" : "setPowerStatus"
-    status = state ? "active" : "standby"
-
+    # setPowerStatus takes a boolean, the "active"/"standby" strings only
+    # appear in getPowerStatus responses and are rejected as Illegal Argument
     response = post("/sony/system",
       headers: auth_headers,
       body: {
-        method:  method,
+        method:  "setPowerStatus",
         id:      1,
-        params:  [{status: status}],
+        params:  [{status: state}],
         version: "1.0",
       }.to_json
     )
 
-    if response.success?
+    if parse_result(response, "setPowerStatus")
       self[:power] = state
       power?
-    else
-      logger.warn { "Power command failed: #{response.body}" }
     end
 
     state
@@ -242,21 +237,15 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       }.to_json
     )
 
-    if response.success?
-      data = JSON.parse(response.body)
-      if result = data["result"]?.try(&.as_a?.try(&.first?))
-        status = result["status"]?.try(&.as_s)
+    if result = parse_result(response, "getPowerStatus")
+      if status = result.as_a?.try(&.first?).try(&.["status"]?).try(&.as_s?)
         power_state = status == "active"
         self[:power] = power_state
-        power_state
-      else
-        logger.warn { "Failed to parse power status response: #{response.body}" }
-        nil
+        return power_state
       end
-    else
-      logger.warn { "Power status query failed: #{response.body}" }
-      nil
+      logger.warn { "Failed to parse power status response: #{response.body}" }
     end
+    nil
   end
 
   # Volume Control
@@ -270,53 +259,32 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
         id:     3,
         params: [{
           target: "speaker",
+          # must be sent as a string, integers are rejected as Illegal Argument
           volume: level.to_s,
         }],
         version: "1.0",
       }.to_json
     )
 
-    if response.success?
+    if parse_result(response, "setAudioVolume")
       self[:volume] = level
       volume?
-    else
-      logger.warn { "Volume command failed: #{response.body}" }
     end
 
     level
   end
 
   def volume?
-    response = post("/sony/audio",
-      headers: auth_headers,
-      body: {
-        method:  "getVolumeInformation",
-        id:      4,
-        params:  [] of String,
-        version: "1.0",
-      }.to_json
-    )
-
-    if response.success?
-      data = JSON.parse(response.body)
-      if result = data["result"]?.try(&.as_a?.try(&.first?))
-        if targets = result.as_a?
-          speaker_info = targets.find { |t| t["target"]? == "speaker" }
-          if speaker_info
-            volume_level = speaker_info["volume"]?.try(&.as_s.to_i?)
-            if volume_level
-              self[:volume] = volume_level
-              return volume_level
-            end
-          end
-        end
+    if info = speaker_info
+      # returned as a number on hardware, though older firmware may use strings
+      level = info["volume"]?.try { |v| v.as_i? || v.as_s?.try(&.to_i?) }
+      if level
+        self[:volume] = level
+        return level
       end
-      logger.warn { "Failed to parse volume response: #{response.body}" }
-      nil
-    else
-      logger.warn { "Volume query failed: #{response.body}" }
-      nil
+      logger.warn { "Failed to parse volume information: #{info}" }
     end
+    nil
   end
 
   def volume_up
@@ -347,11 +315,9 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       }.to_json
     )
 
-    if response.success?
+    if parse_result(response, "setAudioMute")
       self[:mute] = state
       mute?
-    else
-      logger.warn { "Mute command failed: #{response.body}" }
     end
 
     state
@@ -362,36 +328,15 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
   end
 
   def mute?
-    response = post("/sony/audio",
-      headers: auth_headers,
-      body: {
-        method:  "getVolumeInformation",
-        id:      6,
-        params:  [] of String,
-        version: "1.0",
-      }.to_json
-    )
-
-    if response.success?
-      data = JSON.parse(response.body)
-      if result = data["result"]?.try(&.as_a?.try(&.first?))
-        if targets = result.as_a?
-          speaker_info = targets.find { |t| t["target"]? == "speaker" }
-          if speaker_info
-            mute_state = speaker_info["mute"]?.try(&.as_bool)
-            if !mute_state.nil?
-              self[:mute] = mute_state
-              return mute_state
-            end
-          end
-        end
+    if info = speaker_info
+      mute_state = info["mute"]?.try(&.as_bool?)
+      unless mute_state.nil?
+        self[:mute] = mute_state
+        return mute_state
       end
-      logger.warn { "Failed to parse mute response: #{response.body}" }
-      nil
-    else
-      logger.warn { "Mute query failed: #{response.body}" }
-      nil
+      logger.warn { "Failed to parse mute information: #{info}" }
     end
+    nil
   end
 
   # Input Selection
@@ -410,11 +355,9 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       }.to_json
     )
 
-    if response.success?
+    if parse_result(response, "setPlayContent")
       self[:input] = input.to_s
       input?
-    else
-      logger.warn { "Input switch failed: #{response.body}" }
     end
 
     input
@@ -431,23 +374,16 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       }.to_json
     )
 
-    if response.success?
-      data = JSON.parse(response.body)
-      if result = data["result"]?.try(&.as_a?.try(&.first?))
-        if uri = result["uri"]?.try(&.as_s)
-          if input = Input.from_api_uri(uri)
-            self[:input] = input.to_s
-            input
-          else
-            logger.warn { "Unknown input URI: #{uri}" }
-            nil
-          end
+    if result = parse_result(response, "getPlayingContentInfo")
+      if uri = result.as_a?.try(&.first?).try(&.["uri"]?).try(&.as_s?)
+        if input = Input.from_api_uri(uri)
+          self[:input] = input.to_s
+          return input
         end
+        logger.warn { "Unknown input URI: #{uri}" }
       end
-    else
-      logger.warn { "Input query failed: #{response.body}" }
-      nil
     end
+    nil
   end
 
   private def do_poll
@@ -456,6 +392,49 @@ class Sony::Displays::BraviaPro < PlaceOS::Driver
       mute?
       volume?
     end
+  end
+
+  # fetches the speaker entry from getVolumeInformation, shared by volume? and mute?
+  private def speaker_info : JSON::Any?
+    response = post("/sony/audio",
+      headers: auth_headers,
+      body: {
+        method:  "getVolumeInformation",
+        id:      4,
+        params:  [] of String,
+        version: "1.0",
+      }.to_json
+    )
+
+    if result = parse_result(response, "getVolumeInformation")
+      if targets = result.as_a?.try(&.first?).try(&.as_a?)
+        return targets.find { |t| t["target"]? == "speaker" }
+      end
+      logger.warn { "Failed to parse volume information response: #{response.body}" }
+    end
+    nil
+  end
+
+  # the display reports failures as HTTP 200 with an {"error": [code, message]}
+  # body, so the HTTP status alone cannot confirm a command was accepted
+  private def parse_result(response, request : String) : JSON::Any?
+    unless response.success?
+      logger.warn { "#{request} request failed: HTTP #{response.status_code}, #{response.body}" }
+      return nil
+    end
+
+    data = JSON.parse(response.body)
+    if error = data["error"]?
+      code = error.as_a?.try(&.first?).try(&.as_i?)
+      if code.in?(EXPECTED_ERROR_CODES)
+        logger.debug { "#{request} rejected: #{error}" }
+      else
+        logger.warn { "#{request} failed: #{error}" }
+      end
+      return nil
+    end
+
+    data["result"]?
   end
 
   private def auth_headers
