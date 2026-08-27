@@ -157,9 +157,10 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     [display_input_check(mod), display_power_check(mod)]
   end
 
-  # read-only: current input vs the profile's expected input.
+  # read-only: current input vs the profile's expected input. Forces a live
+  # `input?` device readback first — never trust a stale cached status.
   private def display_input_check(mod) : CheckResult
-    observed = mod.status?(String, :input)
+    observed = read_input(mod)
     expected = @profile.display_input
     result =
       if observed.nil?
@@ -178,20 +179,29 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     error_result("display", "input", "read", e)
   end
 
-  # active: capture power -> power(true) -> confirm on -> restore prior state.
+  # active: capture the *confirmed* prior power via a live `power?` readback ->
+  # power(true) -> confirm on -> restore the captured state on EVERY exit path.
+  # We never mutate a display whose prior state we could not read, and only
+  # report `restored: true` once the readback confirms the captured state.
   private def display_power_check(mod) : CheckResult
-    prior = mod.status?(Bool, :power)
-    mod.power(true).get
-    powered = wait_until { mod.status?(Bool, :power) == true }
+    prior = read_power(mod)
 
-    restored = true
-    if prior == false
-      begin
-        mod.power(false).get
-        restored = wait_until { mod.status?(Bool, :power) == false }
-      rescue
-        restored = false
-      end
+    # Do not act on an unknown prior — a stale/blank status must not lead us to
+    # power a display on and then be unable to put it back.
+    if prior.nil?
+      return CheckResult.new("display", "power", "active", "unknown",
+        observed: any({prior: nil}),
+        reason: "prior_power_unknown")
+    end
+
+    powered = false
+    restored = false
+    begin
+      mod.power(true).get
+      powered = wait_until { read_power(mod) == true }
+    ensure
+      # Runs on completion, timeout, and exception alike.
+      restored = restore_power(mod, prior)
     end
 
     CheckResult.new("display", "power", "active", powered ? "pass" : "fail",
@@ -199,6 +209,37 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       restored: restored)
   rescue e
     error_result("display", "power", "active", e)
+  end
+
+  # Force a live device power readback. Returns the confirmed Bool, or nil when
+  # the device cannot report it (unknown) — we deliberately do NOT fall back to
+  # cached status, since staleness is exactly the risk we are guarding against.
+  private def read_power(mod) : Bool?
+    mod.power?.get.as_bool?
+  rescue
+    nil
+  end
+
+  # Force a live device input readback. `input?` refreshes the driver's
+  # canonical `:input` status as it runs; a nil return means the device could
+  # not determine the input (reported as "unknown"), not a stale value.
+  private def read_input(mod) : String?
+    raw = mod.input?.get
+    return nil if raw.nil? || raw.raw.nil?
+    mod.status?(String, :input) || raw.as_s?
+  end
+
+  # Restore the display to its captured prior power state and confirm via
+  # readback. Returns true ONLY once the readback matches the captured state.
+  private def restore_power(mod, prior : Bool) : Bool
+    if prior
+      wait_until { read_power(mod) == true }
+    else
+      mod.power(false).get
+      wait_until { read_power(mod) == false }
+    end
+  rescue
+    false
   end
 
   # --------------------------------------------------------------------- Zoom
@@ -231,8 +272,10 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     error_result("zoom", "connection", "read", e)
   end
 
-  # active: never touch a live meeting. Otherwise start -> confirm -> exit ->
-  # confirm, leaving the room with no meeting running.
+  # active: never touch a live meeting. Otherwise start the meeting, then ALWAYS
+  # attempt to exit and confirm the room is left with no meeting running — on
+  # every path (started, late/timed-out start, or an exception mid-sequence). A
+  # verification meeting must never be left running.
   private def zoom_meeting_check(mod) : CheckResult
     if mod.status?(Bool, :meeting_active) == true
       return CheckResult.new("zoom", "meeting", "active", "skipped",
@@ -240,17 +283,17 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
         reason: "meeting_already_active")
     end
 
-    mod.start_instant_meeting.get
-    started = wait_until { mod.status?(Bool, :meeting_active) == true }
-
+    started = false
     ended = false
-    restored = true
-    if started
-      mod.exit_meeting.get
-      ended = wait_until do
-        val = mod.status?(JSON::Any, :meeting_ended)
-        mod.status?(Bool, :meeting_active) != true && !(val.nil? || val.raw.nil?)
-      end
+    restored = false
+    begin
+      mod.start_instant_meeting.get
+      started = wait_until { mod.status?(Bool, :meeting_active) == true }
+    ensure
+      # Cleanup runs even if start timed out or raised: a meeting may be running
+      # even when we failed to confirm the start. `restored` stays false until
+      # the readback confirms no meeting is active.
+      ended = end_meeting(mod)
       restored = ended
     end
 
@@ -260,6 +303,25 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       restored: restored)
   rescue e
     error_result("zoom", "meeting", "active", e)
+  end
+
+  # Attempt to end any meeting we may have started and confirm the room is left
+  # with no meeting active. Safe to call even when the start timed out or raised.
+  # Returns true ONLY once the readback confirms the meeting is inactive/ended.
+  private def end_meeting(mod) : Bool
+    mod.exit_meeting.get
+    wait_until do
+      val = mod.status?(JSON::Any, :meeting_ended)
+      mod.status?(Bool, :meeting_active) != true && !(val.nil? || val.raw.nil?)
+    end
+  rescue
+    # Exit command failed — report restored only if the room is demonstrably
+    # inactive; otherwise a meeting may still be running (restored stays false).
+    begin
+      mod.status?(Bool, :meeting_active) == false
+    rescue
+      false
+    end
   end
 
   # ---------------------------------------------------------------------- DSP
