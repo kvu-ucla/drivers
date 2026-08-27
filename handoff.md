@@ -10,11 +10,14 @@ than forking a device driver.
 
 ## Read first (repo conventions)
 
-Before writing any code, read the PlaceOS driver framework guide shipped in this
-repo — **`lib/placeos-driver/CLAUDE.md`** — and follow its conventions for driver
-structure, logic-module `system[:Module]` access, settings, status, and specs.
-Also check for any repo- or directory-level `CLAUDE.md`/`AGENTS.md` guidance and
-defer to it. Match the existing drivers' style; do not invent a new pattern.
+Before writing any code, read (in this order) and follow:
+1. **`lib/placeos-driver/CLAUDE.md`** — the authoritative PlaceOS driver
+   framework guide (driver structure, logic-module `system[:Module]` access,
+   settings, status, spec/harness conventions).
+2. **`README.md`** (repo root) — repo build/spec conventions.
+3. This handoff.
+Match the existing drivers' style; do not invent a new pattern. (There is no
+repo-root `CLAUDE.md`/`AGENTS.md`, so nothing auto-loads — read the above.)
 
 ## Objective
 
@@ -105,10 +108,18 @@ assertion.
 
 ## Constraints
 
-- **Reuse device-driver functions; do not fork a device driver.** Only add a
-  **status readback** to a device driver where the audit shows a gap (NVX
-  signal/lock/output, DSP meter), and coordinate with the active development on
-  those drivers.
+- **SCOPE BOUNDARY — build ONLY the verification logic module. Do NOT modify any
+  device driver** (`nvx_rx`, `nvx_tx`, `bravia_pro`, `zoom_zrc`,
+  `intellimix_room`). They are under active development by their owners; the
+  missing NVX/DSP readbacks are added **by the driver team, separately** — not by
+  this agent. The logic module only *calls existing functions / reads existing
+  status*.
+- **Degrade gracefully on missing readbacks.** Display + Zoom are fully
+  supported today. For DSP (meter) and NVX (signal/lock/output), where the
+  readback is not yet exposed, record the check as `skipped` /
+  `pending_readback` — never fail — so the module ships now for Display + Zoom
+  and those checks light up automatically once the driver team exposes the
+  readbacks.
 - **Restore prior state** for every active check; leave the room as found.
 - **Safety precondition:** for the pilot, "approved test room, verified not in
   use." The AVITS side enforces the authorization gate; this module must still
