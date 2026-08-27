@@ -4,9 +4,10 @@ require "placeos-driver/spec"
 # observable status keys and callable functions (per the capability audit).
 #
 # The active-check mocks expose the device readback functions the logic module
-# now insists on (`power?`, `input?`), plus call counters and failure/delay
+# insists on (`power?`, `input?`), plus call counters and failure/delay/race
 # controls (driven from status keys the spec sets) so the cleanup/restore
-# behaviour can be proven, not just the happy path.
+# behaviour and the readback gate can be PROVEN, not merely asserted on the
+# happy path.
 
 # :nodoc:
 class MockDisplay < DriverSpecs::MockDriver
@@ -16,12 +17,16 @@ class MockDisplay < DriverSpecs::MockDriver
     self[:power_query_count] = 0
     self[:input_query_count] = 0
     self[:power_set_count] = 0
+    self[:readback_broken] = false
   end
 
-  # active command — controllable failure + delay
+  # active command — controllable failure + delay. When `arm_readback_fail` is
+  # set, performing a set "breaks" the readback (models a device that changes
+  # but can no longer be read back to confirm).
   def power(state : Bool)
     self[:power_set_count] = (self[:power_set_count]?.try(&.as_i) || 0) + 1
     raise "power command failed" if self[:fail_power_set]?.try(&.as_bool?)
+    self[:readback_broken] = true if self[:arm_readback_fail]?.try(&.as_bool?)
     if (delay = self[:set_delay]?.try(&.as_f?)) && delay > 0
       sleep delay.seconds
     end
@@ -29,17 +34,26 @@ class MockDisplay < DriverSpecs::MockDriver
     state
   end
 
-  # device readback — forces a fresh read. Returns nil (unknown) when the spec
-  # sets `report_power` false, modelling a stale/unreadable capture.
+  # device readback — forces a fresh read. Controls (in precedence order):
+  #   report_power=false           -> nil (unknown / unreadable capture)
+  #   power_readback_stuck_off     -> always false (never confirms a power-on)
+  #   readback_broken              -> nil (post-change readback failure)
   def power?
     self[:power_query_count] = (self[:power_query_count]?.try(&.as_i) || 0) + 1
     return nil if self[:report_power]?.try(&.as_bool?) == false
+    return false if self[:power_readback_stuck_off]?.try(&.as_bool?)
+    return nil if self[:readback_broken]?.try(&.as_bool?)
     self[:power]?
   end
 
+  # device readback — `live_input_override` returns a LIVE value that differs
+  # from the cached `:input` status, proving the logic prefers the live value.
   def input?
     self[:input_query_count] = (self[:input_query_count]?.try(&.as_i) || 0) + 1
     return nil if self[:report_input]?.try(&.as_bool?) == false
+    if (ov = self[:live_input_override]?) && !ov.raw.nil?
+      return ov.as_s?
+    end
     self[:input]?
   end
 end
@@ -54,32 +68,47 @@ class MockZoom < DriverSpecs::MockDriver
     self[:meeting_ended] = nil
     self[:start_count] = 0
     self[:exit_count] = 0
+    self[:pending_activation] = false
   end
 
   def get_connection_state
     self[:connection_state]
   end
 
-  # real driver reconciles this via the event stream; the mock reflects the
-  # observable end state directly. Controls:
+  # Controls:
   #   fail_start  -> raise (start exception)
-  #   stall_start -> count the call but never mark the meeting active (models a
-  #                  start that does not confirm within the timeout)
+  #   stall_start -> count the call but never mark the meeting active (a start
+  #                  that never confirms and never actually starts)
+  #   late_start  -> arm a start that has NOT confirmed yet but WILL activate
+  #                  the meeting on the next exit attempt (models a start that
+  #                  becomes active after the confirmation window closed)
   def start_instant_meeting
     self[:start_count] = (self[:start_count]?.try(&.as_i) || 0) + 1
     raise "start_instant_meeting failed" if self[:fail_start]?.try(&.as_bool?)
-    unless self[:stall_start]?.try(&.as_bool?)
+    if self[:late_start]?.try(&.as_bool?)
+      self[:pending_activation] = true
+    elsif self[:stall_start]?.try(&.as_bool?)
+      # counted only; meeting never becomes active
+    else
       self[:meeting_ended] = nil
       self[:meeting_active] = true
     end
     "started"
   end
 
-  # Control: fail_exit -> raise without clearing the meeting (models an exit we
-  # cannot confirm — the room may still be running a meeting).
+  # Controls:
+  #   fail_exit -> raise without clearing the meeting (an exit we cannot confirm)
+  # Late-start race: the first exit "misses" the meeting because the async start
+  # activates exactly as the exit lands; a subsequent exit then ends it.
   def exit_meeting
     self[:exit_count] = (self[:exit_count]?.try(&.as_i) || 0) + 1
     raise "exit_meeting failed" if self[:fail_exit]?.try(&.as_bool?)
+    if self[:pending_activation]?.try(&.as_bool?)
+      self[:pending_activation] = false
+      self[:meeting_active] = true
+      self[:meeting_ended] = nil
+      return "raced"
+    end
     self[:meeting_active] = false
     self[:meeting_ended] = {reason: "ended"}
     "exited"
@@ -113,9 +142,10 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
     Decoder: {MockDecoder},
   })
 
+  # Short confirm timeout keeps the timeout/race paths quick and deterministic.
   settings({
     profile:         {display_input: "Hdmi1"},
-    confirm_timeout: 2,
+    confirm_timeout: 0.5,
     poll_interval:   0.05,
   })
 
@@ -183,7 +213,6 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   live["result"].as_s.should eq("skipped")
   live["reason"].as_s.should eq("meeting_already_active")
   system(:ZoomZRC_1)[:meeting_active].should eq(true)
-  # neither meeting command was issued against the live meeting
   system(:ZoomZRC_1)[:start_count].as_i.should eq(start_before)
   system(:ZoomZRC_1)[:exit_count].as_i.should eq(exit_before)
   system(:ZoomZRC_1)[:meeting_active] = false
@@ -195,8 +224,7 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   lit["result"].as_s.should eq("pass")
 
   # --- Zoom start times out (never confirms) -> cleanup STILL runs ----------
-  # Even though start is never confirmed, exit_meeting is issued and the room is
-  # left with no meeting active.
+  # SPEC PROOF 4 (timeout path): restored transitions false -> confirmed-true.
   system(:ZoomZRC_1)[:stall_start] = true
   exit_before = system(:ZoomZRC_1)[:exit_count].as_i
   exec(:verify).get
@@ -208,18 +236,44 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   system(:ZoomZRC_1)[:meeting_active].should eq(false)
   system(:ZoomZRC_1)[:stall_start] = false
 
-  # --- Zoom start raises -> cleanup STILL runs ------------------------------
+  # --- Zoom GENUINE late start (the case that used to escape) ---------------
+  # SPEC PROOF 3: start does NOT confirm in the window but the meeting becomes
+  # active as the first exit lands; the retry loop must exit it again and leave
+  # the room inactive. The extra exit call (+2) proves the retry actually fired.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  system(:ZoomZRC_1)[:pending_activation] = false
+  system(:ZoomZRC_1)[:late_start] = true
+  exit_before = system(:ZoomZRC_1)[:exit_count].as_i
+  exec(:verify).get
+  late = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
+  late["result"].as_s.should eq("fail")
+  late["observed"]["started"].as_bool.should eq(false)
+  late["restored"].as_bool.should eq(true)
+  system(:ZoomZRC_1)[:meeting_active].should eq(false)
+  system(:ZoomZRC_1)[:exit_count].as_i.should eq(exit_before + 2)
+  system(:ZoomZRC_1)[:late_start] = false
+
+  # --- Zoom start raises -> cleanup STILL runs, restored carried on error ----
+  # SPEC PROOF 4 / LOW: exception path reports restored (confirmed-true here)
+  # via error_result rather than discarding it.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
   system(:ZoomZRC_1)[:fail_start] = true
   exit_before = system(:ZoomZRC_1)[:exit_count].as_i
   exec(:verify).get
   raised = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
   raised["result"].as_s.should eq("unknown")
+  raised["restored"].as_bool.should eq(true)
   system(:ZoomZRC_1)[:exit_count].as_i.should eq(exit_before + 1)
   system(:ZoomZRC_1)[:meeting_active].should eq(false)
   system(:ZoomZRC_1)[:fail_start] = false
 
   # --- Zoom exit raises -> restored is honestly false -----------------------
-  # A meeting starts, but exit cannot be confirmed; we must NOT claim restored.
+  # SPEC PROOF 4 (cannot confirm): a meeting starts but exit never confirms; we
+  # must NOT claim restored.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
   system(:ZoomZRC_1)[:fail_exit] = true
   exec(:verify).get
   exit_err = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
@@ -229,9 +283,41 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   system(:ZoomZRC_1)[:meeting_active] = false
   system(:ZoomZRC_1)[:meeting_ended] = nil
 
+  # --- Display power-on confirmation TIMES OUT, restore SUCCEEDS -------------
+  # SPEC PROOF 1: the power-on readback never confirms (stuck off), so the check
+  # fails, but the captured prior state is restored and confirmed -> restored
+  # true and the room returns to the captured (off) state, with the restore
+  # command actually issued.
+  system(:Display_1)[:power] = false
+  system(:Display_1)[:power_readback_stuck_off] = true
+  set_before = system(:Display_1)[:power_set_count].as_i
+  exec(:verify).get
+  timed_out = find.call(status[:verification]["checks"].as_a, "display", "power")
+  timed_out["result"].as_s.should eq("fail")
+  timed_out["restored"].as_bool.should eq(true)
+  system(:Display_1)[:power].should eq(false)
+  # power(true) attempt + the power(false) restore both issued
+  system(:Display_1)[:power_set_count].as_i.should eq(set_before + 2)
+  system(:Display_1)[:power_readback_stuck_off] = false
+
+  # --- Display post-capture readback FAILS after change -> restored WITHHELD --
+  # SPEC PROOF 2: the readback breaks the moment we change state, so even though
+  # the restore command runs, restoration cannot be CONFIRMED -> restored false.
+  # (Proves the readback gate, not merely that set-calls happened.)
+  system(:Display_1)[:power] = false
+  system(:Display_1)[:readback_broken] = false
+  system(:Display_1)[:arm_readback_fail] = true
+  set_before = system(:Display_1)[:power_set_count].as_i
+  exec(:verify).get
+  broken = find.call(status[:verification]["checks"].as_a, "display", "power")
+  broken["result"].as_s.should eq("fail")
+  broken["restored"].as_bool.should eq(false)
+  # the restore command still ran (2 sets) even though it could not be confirmed
+  system(:Display_1)[:power_set_count].as_i.should eq(set_before + 2)
+  system(:Display_1)[:arm_readback_fail] = false
+  system(:Display_1)[:readback_broken] = false
+
   # --- Display: stale/unknown prior -> never power on -----------------------
-  # power? cannot report -> prior is unknown -> the display is NOT powered on and
-  # no set command is issued.
   system(:Display_1)[:report_power] = false
   set_before = system(:Display_1)[:power_set_count].as_i
   exec(:verify).get
@@ -241,25 +327,39 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   system(:Display_1)[:power_set_count].as_i.should eq(set_before)
   system(:Display_1)[:report_power] = true
 
-  # --- Display: power command fails -> restore is STILL attempted -----------
-  # power(true) raises; the ensure path still attempts to restore the captured
-  # prior state (a second set call), and the result is not a false pass.
+  # --- Display: power command fails -> restore attempted, restored honest ----
+  # LOW: error_result now carries the cleanup outcome (restored false here).
   system(:Display_1)[:fail_power_set] = true
   set_before = system(:Display_1)[:power_set_count].as_i
   exec(:verify).get
   failed_pwr = find.call(status[:verification]["checks"].as_a, "display", "power")
   failed_pwr["result"].as_s.should eq("unknown")
-  # one set attempt for power(true), one for the restore attempt
+  failed_pwr["restored"].as_bool.should eq(false)
   system(:Display_1)[:power_set_count].as_i.should eq(set_before + 2)
   system(:Display_1)[:fail_power_set] = false
 
-  # --- failure surfaced, not hidden: input mismatch ------------------------
+  # --- MEDIUM proof: live input readback preferred over cached status --------
+  # cached :input is stale ("Hdmi1") while the LIVE input? returns "Hdmi2"; the
+  # profile expects "Hdmi2". A pass proves the logic used the live value, not
+  # the cached status.
   settings({
     profile:         {display_input: "Hdmi2"},
-    confirm_timeout: 2,
+    confirm_timeout: 0.5,
     poll_interval:   0.05,
   })
+  system(:Display_1)[:input] = "Hdmi1"
+  system(:Display_1)[:live_input_override] = "Hdmi2"
+  exec(:verify).get
+  live_in = find.call(status[:verification]["checks"].as_a, "display", "input")
+  live_in["result"].as_s.should eq("pass")
+  live_in["observed"]["input"].as_s.should eq("Hdmi2")
+  system(:Display_1)[:live_input_override] = nil
+
+  # --- failure surfaced, not hidden: input mismatch ------------------------
+  # No override: live input? returns cached "Hdmi1" while the profile wants
+  # "Hdmi2" -> fail.
   exec(:verify).get
   mism = find.call(status[:verification]["checks"].as_a, "display", "input")
   mism["result"].as_s.should eq("fail")
+  mism["observed"]["input"].as_s.should eq("Hdmi1")
 end

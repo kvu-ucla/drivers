@@ -117,6 +117,10 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   @confirm_timeout : Float64 = 10.0
   @poll_interval : Float64 = 0.5
 
+  # Bounded number of exit attempts when cleaning up a Zoom verification meeting.
+  # Defends against a start that activates *after* the confirmation window.
+  EXIT_ATTEMPTS = 3
+
   def on_load
     on_update
   end
@@ -184,6 +188,7 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   # We never mutate a display whose prior state we could not read, and only
   # report `restored: true` once the readback confirms the captured state.
   private def display_power_check(mod) : CheckResult
+    restored : Bool? = nil
     prior = read_power(mod)
 
     # Do not act on an unknown prior — a stale/blank status must not lead us to
@@ -195,7 +200,6 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     end
 
     powered = false
-    restored = false
     begin
       mod.power(true).get
       powered = wait_until { read_power(mod) == true }
@@ -208,7 +212,8 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       observed: any({powered_on: powered, prior: prior}),
       restored: restored)
   rescue e
-    error_result("display", "power", "active", e)
+    # Carry the cleanup outcome so the audit is honest even on the error path.
+    error_result("display", "power", "active", e, restored: restored)
   end
 
   # Force a live device power readback. Returns the confirmed Bool, or nil when
@@ -220,13 +225,14 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     nil
   end
 
-  # Force a live device input readback. `input?` refreshes the driver's
-  # canonical `:input` status as it runs; a nil return means the device could
-  # not determine the input (reported as "unknown"), not a stale value.
+  # Force a live device input readback and PREFER the live returned value. The
+  # cached `:input` status is only an explicit fallback for drivers whose
+  # `input?` returns a non-string (e.g. an enum) form; a JSON-null return means
+  # the device could not determine the input (reported as "unknown").
   private def read_input(mod) : String?
     raw = mod.input?.get
     return nil if raw.nil? || raw.raw.nil?
-    mod.status?(String, :input) || raw.as_s?
+    raw.as_s? || mod.status?(String, :input)
   end
 
   # Restore the display to its captured prior power state and confirm via
@@ -285,7 +291,7 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
 
     started = false
     ended = false
-    restored = false
+    restored : Bool? = false
     begin
       mod.start_instant_meeting.get
       started = wait_until { mod.status?(Bool, :meeting_active) == true }
@@ -302,26 +308,46 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       observed: any({started: started, ended: ended}),
       restored: restored)
   rescue e
-    error_result("zoom", "meeting", "active", e)
+    # Carry the cleanup outcome so the audit is honest even on the error path.
+    error_result("zoom", "meeting", "active", e, restored: restored)
   end
 
-  # Attempt to end any meeting we may have started and confirm the room is left
-  # with no meeting active. Safe to call even when the start timed out or raised.
-  # Returns true ONLY once the readback confirms the meeting is inactive/ended.
+  # Robustly end any meeting our start may have created — including a start that
+  # activates *after* the initial confirmation window closed. Each pass re-issues
+  # exit_meeting and re-confirms; we keep retrying while a meeting is (or becomes)
+  # active, up to EXIT_ATTEMPTS. Returns true ONLY once a readback confirms no
+  # meeting is active; otherwise false (never leaves a meeting reported as
+  # restored when it might still be running).
   private def end_meeting(mod) : Bool
-    mod.exit_meeting.get
-    wait_until do
-      val = mod.status?(JSON::Any, :meeting_ended)
-      mod.status?(Bool, :meeting_active) != true && !(val.nil? || val.raw.nil?)
+    EXIT_ATTEMPTS.times do
+      begin
+        mod.exit_meeting.get
+      rescue
+        # exit command raised; re-check state below and maybe retry.
+      end
+
+      confirmed = wait_until do
+        val = mod.status?(JSON::Any, :meeting_ended)
+        mod.status?(Bool, :meeting_active) != true && !(val.nil? || val.raw.nil?)
+      end
+      return true if confirmed
+
+      # Not confirmed ended. If a meeting IS (or has become) active, loop and
+      # exit again — this is the late-activating-start race. If nothing is
+      # active we cannot do better, so report the honest current state.
+      return false unless meeting_active?(mod) == true
     end
+
+    # Exhausted attempts — report the honest final state.
+    meeting_active?(mod) == false
   rescue
-    # Exit command failed — report restored only if the room is demonstrably
-    # inactive; otherwise a meeting may still be running (restored stays false).
-    begin
-      mod.status?(Bool, :meeting_active) == false
-    rescue
-      false
-    end
+    false
+  end
+
+  private def meeting_active?(mod) : Bool?
+    mod.status?(Bool, :meeting_active)
+  rescue
+    nil
   end
 
   # ---------------------------------------------------------------------- DSP
@@ -416,9 +442,11 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     CheckResult.new(device, check, type, "skipped", reason: "module_absent")
   end
 
-  private def error_result(device : String, check : String, type : String, e : Exception) : CheckResult
+  # Records an errored check as `unknown`. Carries the `restored` outcome when
+  # the caller captured one in cleanup, so the audit trail is not lost.
+  private def error_result(device : String, check : String, type : String, e : Exception, restored : Bool? = nil) : CheckResult
     logger.warn(exception: e) { "#{device}/#{check} verification errored" }
-    CheckResult.new(device, check, type, "unknown", reason: e.message)
+    CheckResult.new(device, check, type, "unknown", reason: e.message, restored: restored)
   end
 
   # Wrap any JSON-serializable value as JSON::Any for evidence fields.
