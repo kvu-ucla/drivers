@@ -40,6 +40,7 @@ class MockDisplay < DriverSpecs::MockDriver
   #   readback_broken              -> nil (post-change readback failure)
   def power?
     self[:power_query_count] = (self[:power_query_count]?.try(&.as_i) || 0) + 1
+    raise "power? readback faulted (disconnected device)" if self[:raise_power]?.try(&.as_bool?)
     return nil if self[:report_power]?.try(&.as_bool?) == false
     return false if self[:power_readback_stuck_off]?.try(&.as_bool?)
     return nil if self[:readback_broken]?.try(&.as_bool?)
@@ -436,4 +437,80 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   mism = find.call(status[:verification]["checks"].as_a, "display", "input")
   mism["result"].as_s.should eq("fail")
   mism["observed"]["input"].as_s.should eq("Hdmi1")
+
+  # === round-2 hardening: trigger completeness contract ====================
+  # The trigger reads a COMPLETE 8-tuple record on self[:verification]; verify
+  # must always publish one. These cases prove a faulting/disconnected room can
+  # no longer leave the sweep partial or unpublished.
+
+  # --- a dependent module faulting mid-check does NOT abort the sweep --------
+  # Display power readback RAISES (disconnected device) and Zoom start RAISES;
+  # verify must still publish all 8 tuples, carry honest tuples for the faulting
+  # checks (not drop them), keep the healthy checks real, and still run cleanup.
+  settings({
+    profile:         {display_input: "Hdmi1"},
+    confirm_timeout: 0.5,
+    poll_interval:   0.05,
+  })
+  system(:Display_1)[:power] = false
+  system(:Display_1)[:report_power] = true
+  system(:Display_1)[:report_input] = true
+  system(:Display_1)[:readback_broken] = false
+  system(:Display_1)[:arm_readback_fail] = false
+  system(:Display_1)[:power_readback_stuck_off] = false
+  system(:Display_1)[:fail_power_set] = false
+  system(:Display_1)[:live_input_override] = nil
+  system(:Display_1)[:raise_power] = true
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  system(:ZoomZRC_1)[:clean_exit] = false
+  system(:ZoomZRC_1)[:unknown_exit] = false
+  system(:ZoomZRC_1)[:noop_exit] = false
+  system(:ZoomZRC_1)[:stall_start] = false
+  system(:ZoomZRC_1)[:late_start] = false
+  system(:ZoomZRC_1)[:fail_exit] = false
+  system(:ZoomZRC_1)[:fail_start] = true
+  zoom_exit_before = system(:ZoomZRC_1)[:exit_count].as_i
+
+  exec(:verify).get
+  faulted = status[:verification]
+  faulted["ranAt"].as_s.should_not be_empty
+  fchecks = faulted["checks"].as_a
+  # COMPLETE record: exactly the 8 sweep tuples, none dropped.
+  fchecks.size.should eq(8)
+  # faulting checks carry honest tuples (present, not missing)
+  find.call(fchecks, "display", "power")["result"].as_s.should eq("unknown")
+  zmeet = find.call(fchecks, "zoom", "meeting")
+  zmeet["result"].as_s.should eq("unknown")
+  # restore/cleanup invariant intact: exit attempted + confirmed even on the raise
+  zmeet["restored"].as_bool.should eq(true)
+  system(:ZoomZRC_1)[:exit_count].as_i.should eq(zoom_exit_before + 1)
+  # healthy checks are still real, not collateral-aborted
+  find.call(fchecks, "zoom", "connection")["result"].as_s.should eq("pass")
+  find.call(fchecks, "dsp", "audio_signal")["result"].as_s.should eq("pass")
+  find.call(fchecks, "display", "input")["result"].as_s.should eq("pass")
+  find.call(fchecks, "nvx_encoder", "input_signal")["result"].as_s.should eq("skipped")
+  find.call(fchecks, "nvx_decoder", "stream_lock")["result"].as_s.should eq("skipped")
+  find.call(fchecks, "nvx_decoder", "output_present")["result"].as_s.should eq("skipped")
+  system(:Display_1)[:raise_power] = false
+  system(:ZoomZRC_1)[:fail_start] = false
+
+  # --- absent / disconnected dependent modules -> absent tuples, no raise -----
+  # Every dependent module points at a generic name absent from the system; the
+  # sweep must publish 8 honest module_absent tuples, not raise or truncate.
+  settings({
+    modules: {display: "Ghost", zoom: "Ghost", dsp: "Ghost", encoder: "Ghost", decoder: "Ghost"},
+    profile: {display_input: "Hdmi1"},
+    confirm_timeout: 0.5,
+    poll_interval:   0.05,
+  })
+  exec(:verify).get
+  gone = status[:verification]
+  gone["ranAt"].as_s.should_not be_empty
+  gone_checks = gone["checks"].as_a
+  gone_checks.size.should eq(8)
+  gone_checks.each do |c|
+    c["result"].as_s.should eq("skipped")
+    c["reason"].as_s.should eq("module_absent")
+  end
 end

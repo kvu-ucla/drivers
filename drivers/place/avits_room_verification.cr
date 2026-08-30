@@ -133,18 +133,77 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     @poll_interval = setting?(Float64, :poll_interval) || 0.5
   end
 
-  # Run every device verification and record the evidence schema. Individual
-  # checks never raise out of here — a failed device yields a recorded result,
-  # not an aborted run.
+  # The full, ORDERED sweep contract: every (device, check, type) tuple this
+  # module must publish on `self[:verification]` on EVERY run. The AVITS trigger
+  # readback expects this complete 8-tuple record; a missing/partial record reads
+  # as an execution fault. Any tuple not replaced by a real check result is
+  # published fail-closed as `unknown` / `sweep_aborted`.
+  SWEEP = [
+    {device: "display", check: "input", type: "read"},
+    {device: "display", check: "power", type: "active"},
+    {device: "zoom", check: "connection", type: "read"},
+    {device: "zoom", check: "meeting", type: "active"},
+    {device: "dsp", check: "audio_signal", type: "active"},
+    {device: "nvx_encoder", check: "input_signal", type: "read"},
+    {device: "nvx_decoder", check: "stream_lock", type: "read"},
+    {device: "nvx_decoder", check: "output_present", type: "read"},
+  ]
+
+  # Run every device verification and record the evidence schema. The trigger
+  # contract (a COMPLETE 8-tuple record on `self[:verification]`) must hold on
+  # EVERY path: individual checks never raise out of here, and even an
+  # unexpected raise — or this fiber being killed mid-sweep (e.g. an exec/RPC
+  # timeout while a check waits on a disconnected device) — still leaves a
+  # complete, fail-closed record behind.
   @[Security(Level::Support)]
   def verify
-    checks = [] of CheckResult
-    checks.concat display_checks
-    checks.concat zoom_checks
-    checks << dsp_check
-    checks.concat nvx_checks
+    ran_at = Time.utc.to_rfc3339
+    results = seed_sweep
 
-    payload = {ranAt: Time.utc.to_rfc3339, checks: checks}
+    # Publish the fail-closed skeleton BEFORE any work: if the fiber is killed
+    # mid-sweep before the ensure can run, the trigger still reads a complete
+    # (all-`sweep_aborted`) record instead of an absent one.
+    published = publish_sweep(ran_at, results)
+
+    begin
+      run_family(results) { display_checks }
+      run_family(results) { zoom_checks }
+      run_family(results) { [dsp_check] }
+      run_family(results) { nvx_checks }
+    ensure
+      # Guarantees a COMPLETE record on every path — normal completion or an
+      # unexpected raise — carrying whatever real results the sweep produced and
+      # leaving the rest fail-closed.
+      published = publish_sweep(ran_at, results)
+    end
+
+    published
+  end
+
+  # Pre-seed all 8 sweep tuples fail-closed (`unknown` / `sweep_aborted`) so a
+  # tuple that never gets a real result is still published in the honest schema.
+  private def seed_sweep : Hash(Tuple(String, String), CheckResult)
+    seeded = {} of Tuple(String, String) => CheckResult
+    SWEEP.each do |t|
+      seeded[{t[:device], t[:check]}] =
+        CheckResult.new(t[:device], t[:check], t[:type], "unknown", reason: "sweep_aborted")
+    end
+    seeded
+  end
+
+  # Run one check family and merge its results, keyed by (device, check). A
+  # family that raises (a defensive backstop — families already emit their own
+  # absent/error tuples) leaves its pre-seeded fail-closed tuples in place rather
+  # than aborting the whole sweep.
+  private def run_family(results, & : -> Array(CheckResult)) : Nil
+    yield.each { |check| results[{check.device, check.check}] = check }
+  rescue e
+    logger.error(exception: e) { "verification check family raised mid-sweep; retaining fail-closed tuples" }
+  end
+
+  # Emit the full ordered sweep and publish it to `self[:verification]`.
+  private def publish_sweep(ran_at : String, results)
+    payload = {ranAt: ran_at, checks: SWEEP.map { |t| results[{t[:device], t[:check]}] }}
     self[:verification] = payload
     payload
   end
@@ -159,6 +218,11 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
 
     mod = system[name]
     [display_input_check(mod), display_power_check(mod)]
+  rescue e
+    # A disconnected/absent module can raise from the `system[name]` proxy lookup
+    # itself (outside the leaf checks' own rescues) — emit honest error tuples so
+    # the sweep stays complete instead of aborting.
+    [error_result("display", "input", "read", e), error_result("display", "power", "active", e)]
   end
 
   # read-only: current input vs the profile's expected input. Forces a live
@@ -258,6 +322,10 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
 
     mod = system[name]
     [zoom_connection_check(mod), zoom_meeting_check(mod)]
+  rescue e
+    # Guard the `system[name]` proxy lookup (outside the leaf rescues) so a
+    # disconnected/absent Zoom module yields honest error tuples, not an abort.
+    [error_result("zoom", "connection", "read", e), error_result("zoom", "meeting", "active", e)]
   end
 
   # read-only: connection / online state.
@@ -396,6 +464,12 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       nvx_signal_check("nvx_encoder", @modules.encoder, @readback.encoder_signal, "input_signal"),
       nvx_signal_check("nvx_decoder", @modules.decoder, @readback.decoder_lock, "stream_lock"),
       nvx_signal_check("nvx_decoder", @modules.decoder, @readback.decoder_output, "output_present"),
+    ]
+  rescue e
+    [
+      error_result("nvx_encoder", "input_signal", "read", e),
+      error_result("nvx_decoder", "stream_lock", "read", e),
+      error_result("nvx_decoder", "output_present", "read", e),
     ]
   end
 
