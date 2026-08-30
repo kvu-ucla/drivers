@@ -456,9 +456,18 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   # active-intent: prove program audio is flowing. The Shure driver exposes no
   # output level/meter readback yet, so until the configured meter key appears
   # this records `pending_readback` (never fails). Once the meter key exists it
-  # evaluates signal-present automatically. The active preset/mute + restore
-  # sequence is deliberately deferred until that proof readback exists — mutating
-  # audio state we cannot verify is not worth the risk.
+  # records the reading as evidence but STILL does not act: this check only
+  # reads the meter — it never recalls a preset, never mutates audio state, and
+  # never restores anything. `dsp.preset` is pinned `active` in the sealed
+  # action table, and sealed ingest treats any non-skipped active tuple whose
+  # `restored != true` as a restore/fault failure, so an active `pass` here (no
+  # action, no restore) is a dishonest shape it rejects. The honest wire shape
+  # for "observed the meter, did not act" is `skipped` + reason
+  # `meter_observed_no_action` with the reading in `observed` and NO `restored`
+  # key — exactly what the schema accepts as `not_acted`. A real preset-recall
+  # round-trip that would justify an active pass is a recorded post-UAT item,
+  # deliberately deferred — mutating audio state we cannot verify is not worth
+  # the risk.
   private def dsp_check : CheckResult
     name = @modules.dsp
     return absent("dsp", "audio_signal", "active") unless module_present?(name)
@@ -471,10 +480,11 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
         reason: "pending_readback")
     end
 
-    present = signal_present?(raw)
-    CheckResult.new("dsp", "audio_signal", "active", present ? "pass" : "fail",
+    # Meter present: preserve the reading on the wire but keep the tuple an
+    # honest no-act `skipped` (no `restored`) rather than a lying active pass.
+    CheckResult.new("dsp", "audio_signal", "active", "skipped",
       observed: any({level: raw}),
-      expected: any("signal_present"))
+      reason: "meter_observed_no_action")
   rescue e
     # The DSP lookup/read raised before any action — "did not act" skipped tuple
     # (schema-valid without `restored`), not an active `unknown`.

@@ -235,11 +235,21 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   system(:ZoomZRC_1)[:exit_count].as_i.should eq(exit_before)
   system(:ZoomZRC_1)[:meeting_active] = false
 
-  # --- auto light-up: DSP meter readback appears ---------------------------
+  # --- DSP meter readback appears -> observed, but NO action taken ----------
+  # A meter read never acts on the DSP and never restores anything, so an
+  # active `pass` would be a dishonest shape sealed ingest rejects (a
+  # non-skipped active tuple with `restored != true` faults as a restore
+  # failure). The honest tuple is a no-act `skipped`: the meter reading is
+  # preserved in `observed`, reason `meter_observed_no_action`, and there is NO
+  # `restored` key — exactly the shape sealed ingest accepts as `not_acted`.
   system(:Mixer_1)[:output_level] = 0.7
   exec(:verify).get
   lit = find.call(status[:verification]["checks"].as_a, "dsp", "audio_signal")
-  lit["result"].as_s.should eq("pass")
+  lit["type"].as_s.should eq("active")
+  lit["result"].as_s.should eq("skipped")
+  lit["reason"].as_s.should eq("meter_observed_no_action")
+  lit["observed"]["level"].as_f.should eq(0.7)
+  lit["restored"]?.should be_nil
 
   # --- Zoom start times out (never confirms) -> cleanup STILL runs ----------
   # SPEC PROOF 4 (timeout path): restored transitions false -> confirmed-true.
@@ -489,7 +499,10 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   system(:ZoomZRC_1)[:exit_count].as_i.should eq(zoom_exit_before + 1)
   # healthy checks are still real, not collateral-aborted
   find.call(fchecks, "zoom", "connection")["result"].as_s.should eq("pass")
-  find.call(fchecks, "dsp", "audio_signal")["result"].as_s.should eq("pass")
+  dsp_healthy = find.call(fchecks, "dsp", "audio_signal")
+  dsp_healthy["result"].as_s.should eq("skipped")
+  dsp_healthy["reason"].as_s.should eq("meter_observed_no_action")
+  dsp_healthy["restored"]?.should be_nil
   find.call(fchecks, "display", "input")["result"].as_s.should eq("pass")
   find.call(fchecks, "nvx_encoder", "input_signal")["result"].as_s.should eq("skipped")
   find.call(fchecks, "nvx_decoder", "stream_lock")["result"].as_s.should eq("skipped")
@@ -533,8 +546,8 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   # Every dependent module points at a generic name absent from the system; the
   # sweep must publish 8 honest module_absent tuples, not raise or truncate.
   settings({
-    modules: {display: "Ghost", zoom: "Ghost", dsp: "Ghost", encoder: "Ghost", decoder: "Ghost"},
-    profile: {display_input: "Hdmi1"},
+    modules:         {display: "Ghost", zoom: "Ghost", dsp: "Ghost", encoder: "Ghost", decoder: "Ghost"},
+    profile:         {display_input: "Hdmi1"},
     confirm_timeout: 0.5,
     poll_interval:   0.05,
   })
