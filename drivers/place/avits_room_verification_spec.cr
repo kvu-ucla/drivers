@@ -513,4 +513,85 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
     c["result"].as_s.should eq("skipped")
     c["reason"].as_s.should eq("module_absent")
   end
+  # ABORTED ACTIVE tuples are 'skipped' and carry NO restored — the shape sealed
+  # ingest accepts for an active check that deliberately did not act (an active
+  # 'unknown' without restored would be rejected).
+  ["power", "meeting", "audio_signal"].each do |active_check|
+    t = gone_checks.find { |c| c["check"].as_s == active_check }.not_nil!
+    t["type"].as_s.should eq("active")
+    t["result"].as_s.should eq("skipped")
+    t["restored"]?.should be_nil
+  end
+
+  # --- mid-sweep skeleton: epoch-sentinel ranAt + all-8 skipped shape --------
+  # Park the driver mid-sweep (delay the first family's power set) so the up-front
+  # skeleton publish is observable, then prove the skeleton is a complete, honest,
+  # fail-closed record whose sentinel ranAt guarantees a dead skeleton reads STALE
+  # (ranAt <= triggeredAt) rather than as a fresh trustworthy pass.
+  settings({
+    profile:         {display_input: "Hdmi1"},
+    confirm_timeout: 0.5,
+    poll_interval:   0.05,
+  })
+  system(:Display_1)[:power] = false
+  system(:Display_1)[:report_power] = true
+  system(:Display_1)[:report_input] = true
+  system(:Display_1)[:raise_power] = false
+  system(:Display_1)[:readback_broken] = false
+  system(:Display_1)[:arm_readback_fail] = false
+  system(:Display_1)[:power_readback_stuck_off] = false
+  system(:Display_1)[:fail_power_set] = false
+  system(:Display_1)[:live_input_override] = nil
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  system(:ZoomZRC_1)[:fail_start] = false
+  system(:ZoomZRC_1)[:fail_exit] = false
+  system(:ZoomZRC_1)[:stall_start] = false
+  system(:ZoomZRC_1)[:late_start] = false
+  system(:ZoomZRC_1)[:clean_exit] = false
+  system(:ZoomZRC_1)[:unknown_exit] = false
+  system(:ZoomZRC_1)[:noop_exit] = false
+  # Park the driver in the first family's power set, after the up-front skeleton
+  # publish, so the skeleton is the live status while we read it.
+  system(:Display_1)[:set_delay] = 0.5
+
+  running = exec(:verify)
+  skeleton = nil
+  100.times do
+    v = status[:verification]?
+    if v && (r = v["ranAt"]?) && r.as_s? == "1970-01-01T00:00:00Z"
+      skeleton = v
+      break
+    end
+    sleep 0.02
+  end
+  running.get
+  system(:Display_1)[:set_delay] = 0.0
+
+  skeleton.should_not be_nil
+  sk = skeleton.not_nil!
+  sk["ranAt"].as_s.should eq("1970-01-01T00:00:00Z")
+  sk_checks = sk["checks"].as_a
+  sk_checks.size.should eq(8)
+  sk_checks.each do |c|
+    c["result"].as_s.should eq("skipped")
+    c["reason"].as_s.should eq("sweep_aborted")
+    c["restored"]?.should be_nil
+  end
+  # active skeleton tuples in particular: skipped, no restored (schema-valid)
+  ["power", "meeting", "audio_signal"].each do |ac|
+    t = sk_checks.find { |c| c["check"].as_s == ac }.not_nil!
+    t["type"].as_s.should eq("active")
+    t["result"].as_s.should eq("skipped")
+    t["restored"]?.should be_nil
+  end
+
+  # the FINAL published record stamps ACTUAL completion time: sub-second
+  # precision, and never the epoch sentinel — so a completed same-second sweep is
+  # strictly newer than triggeredAt (never falsely stale).
+  final = status[:verification]
+  final_ran = final["ranAt"].as_s
+  final_ran.should_not eq("1970-01-01T00:00:00Z")
+  final_ran.includes?(".").should be_true
+  final["checks"].as_a.size.should eq(8)
 end

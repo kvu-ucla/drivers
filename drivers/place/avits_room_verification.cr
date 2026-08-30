@@ -155,15 +155,24 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   # unexpected raise — or this fiber being killed mid-sweep (e.g. an exec/RPC
   # timeout while a check waits on a disconnected device) — still leaves a
   # complete, fail-closed record behind.
+  # A fixed epoch-sentinel `ranAt` for the pre-work skeleton. The sealed freshness
+  # rule rejects any result whose `ranAt <= triggeredAt` (verification-result.ts
+  # freshness check), so a skeleton that survives to a readback — only possible if
+  # this fiber was HARD-KILLED mid-sweep before the ensure could stamp a real
+  # completion time — is unambiguously stale and can NEVER be accepted as a fresh,
+  # trustworthy record. That is what makes the up-front skeleton safe: it
+  # guarantees a complete, schema-valid record exists, while its sentinel `ranAt`
+  # guarantees a dead skeleton reads as a fault, not a pass.
+  SKELETON_RAN_AT = "1970-01-01T00:00:00Z"
+
   @[Security(Level::Support)]
   def verify
-    ran_at = Time.utc.to_rfc3339
     results = seed_sweep
 
-    # Publish the fail-closed skeleton BEFORE any work: if the fiber is killed
-    # mid-sweep before the ensure can run, the trigger still reads a complete
-    # (all-`sweep_aborted`) record instead of an absent one.
-    published = publish_sweep(ran_at, results)
+    # Publish the fail-closed skeleton BEFORE any work, stamped with the epoch
+    # sentinel so a dead-skeleton readback (hard kill before the ensure) is
+    # rejected as stale rather than trusted as fresh.
+    published = publish_sweep(SKELETON_RAN_AT, results)
 
     begin
       run_family(results) { display_checks }
@@ -173,8 +182,11 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     ensure
       # Guarantees a COMPLETE record on every path — normal completion or an
       # unexpected raise — carrying whatever real results the sweep produced and
-      # leaving the rest fail-closed.
-      published = publish_sweep(ran_at, results)
+      # leaving the rest fail-closed. Stamp the ACTUAL completion instant with
+      # sub-second precision so a sweep that completes in the same wall-clock
+      # second it was triggered is still strictly greater than `triggeredAt`
+      # (never falsely stale) while staying <= AVITS' read time.
+      published = publish_sweep(Time.utc.to_rfc3339(fraction_digits: 3), results)
     end
 
     published
@@ -185,8 +197,12 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   private def seed_sweep : Hash(Tuple(String, String), CheckResult)
     seeded = {} of Tuple(String, String) => CheckResult
     SWEEP.each do |t|
+      # `skipped` (NOT `unknown`): the skeleton represents work NOT undertaken, so
+      # it is an honest "did not act". Sealed ingest accepts a `skipped` active
+      # tuple with no `restored`, but rejects an active `unknown` that omits
+      # `restored` — so the fail-closed skeleton must be `skipped`.
       seeded[{t[:device], t[:check]}] =
-        CheckResult.new(t[:device], t[:check], t[:type], "unknown", reason: "sweep_aborted")
+        skipped_result(t[:device], t[:check], t[:type], "sweep_aborted")
     end
     seeded
   end
@@ -220,9 +236,11 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     [display_input_check(mod), display_power_check(mod)]
   rescue e
     # A disconnected/absent module can raise from the `system[name]` proxy lookup
-    # itself (outside the leaf checks' own rescues) — emit honest error tuples so
-    # the sweep stays complete instead of aborting.
-    [error_result("display", "input", "read", e), error_result("display", "power", "active", e)]
+    # itself (outside the leaf checks' own rescues) and BEFORE any action. Emit
+    # "did not act" skipped tuples (schema-valid without `restored`) so the sweep
+    # stays complete instead of aborting — an active `unknown` here would be
+    # rejected by sealed ingest.
+    [skipped_result("display", "input", "read", e.class.name), skipped_result("display", "power", "active", e.class.name)]
   end
 
   # read-only: current input vs the profile's expected input. Forces a live
@@ -323,9 +341,10 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     mod = system[name]
     [zoom_connection_check(mod), zoom_meeting_check(mod)]
   rescue e
-    # Guard the `system[name]` proxy lookup (outside the leaf rescues) so a
-    # disconnected/absent Zoom module yields honest error tuples, not an abort.
-    [error_result("zoom", "connection", "read", e), error_result("zoom", "meeting", "active", e)]
+    # Guard the `system[name]` proxy lookup (outside the leaf rescues), before any
+    # action — "did not act" skipped tuples keep the sweep complete and stay
+    # schema-valid (an active `unknown` without `restored` would be rejected).
+    [skipped_result("zoom", "connection", "read", e.class.name), skipped_result("zoom", "meeting", "active", e.class.name)]
   end
 
   # read-only: connection / online state.
@@ -454,7 +473,9 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       observed: any({level: raw}),
       expected: any("signal_present"))
   rescue e
-    error_result("dsp", "audio_signal", "active", e)
+    # The DSP lookup/read raised before any action — "did not act" skipped tuple
+    # (schema-valid without `restored`), not an active `unknown`.
+    skipped_result("dsp", "audio_signal", "active", e.class.name)
   end
 
   # ---------------------------------------------------------------------- NVX
@@ -466,10 +487,12 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
       nvx_signal_check("nvx_decoder", @modules.decoder, @readback.decoder_output, "output_present"),
     ]
   rescue e
+    # Lookup raise before any read — "did not act" skipped tuples keep the sweep
+    # complete (read tuples never carry `restored`).
     [
-      error_result("nvx_encoder", "input_signal", "read", e),
-      error_result("nvx_decoder", "stream_lock", "read", e),
-      error_result("nvx_decoder", "output_present", "read", e),
+      skipped_result("nvx_encoder", "input_signal", "read", e.class.name),
+      skipped_result("nvx_decoder", "stream_lock", "read", e.class.name),
+      skipped_result("nvx_decoder", "output_present", "read", e.class.name),
     ]
   end
 
@@ -524,7 +547,16 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   end
 
   private def absent(device : String, check : String, type : String) : CheckResult
-    CheckResult.new(device, check, type, "skipped", reason: "module_absent")
+    skipped_result(device, check, type, "module_absent")
+  end
+
+  # A schema-valid "did not act" tuple: `result: "skipped"` with a driver reason.
+  # Used for work NOT undertaken — the pre-work skeleton (`sweep_aborted`), an
+  # absent module (`module_absent`), and dispatcher-level `system[name]` lookup
+  # raises that precede any action (reason = the raised error's class). A
+  # `skipped` active tuple carries no `restored`, so sealed ingest accepts it.
+  private def skipped_result(device : String, check : String, type : String, reason : String) : CheckResult
+    CheckResult.new(device, check, type, "skipped", reason: reason)
   end
 
   # Records an errored check as `unknown`. Carries the `restored` outcome when
