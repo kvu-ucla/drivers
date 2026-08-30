@@ -276,7 +276,10 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     # Do not act on an unknown prior — a stale/blank status must not lead us to
     # power a display on and then be unable to put it back.
     if prior.nil?
-      return CheckResult.new("display", "power", "active", "unknown",
+      # Did NOT act (never power a display whose prior state we cannot read back).
+      # An honest "did not act" is `skipped` — schema-valid without `restored`;
+      # an active `unknown` without `restored` is rejected by sealed ingest.
+      return CheckResult.new("display", "power", "active", "skipped",
         observed: any({prior: nil}),
         reason: "prior_power_unknown")
     end

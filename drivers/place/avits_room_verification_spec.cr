@@ -397,8 +397,10 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   set_before = system(:Display_1)[:power_set_count].as_i
   exec(:verify).get
   unknown_pwr = find.call(status[:verification]["checks"].as_a, "display", "power")
-  unknown_pwr["result"].as_s.should eq("unknown")
+  unknown_pwr["type"].as_s.should eq("active")
+  unknown_pwr["result"].as_s.should eq("skipped")
   unknown_pwr["reason"].as_s.should eq("prior_power_unknown")
+  unknown_pwr["restored"]?.should be_nil
   system(:Display_1)[:power_set_count].as_i.should eq(set_before)
   system(:Display_1)[:report_power] = true
 
@@ -479,7 +481,7 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   # COMPLETE record: exactly the 8 sweep tuples, none dropped.
   fchecks.size.should eq(8)
   # faulting checks carry honest tuples (present, not missing)
-  find.call(fchecks, "display", "power")["result"].as_s.should eq("unknown")
+  find.call(fchecks, "display", "power")["result"].as_s.should eq("skipped")
   zmeet = find.call(fchecks, "zoom", "meeting")
   zmeet["result"].as_s.should eq("unknown")
   # restore/cleanup invariant intact: exit attempted + confirmed even on the raise
@@ -494,6 +496,38 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   find.call(fchecks, "nvx_decoder", "output_present")["result"].as_s.should eq("skipped")
   system(:Display_1)[:raise_power] = false
   system(:ZoomZRC_1)[:fail_start] = false
+
+  # --- display prior-power readback FAULTS -> did-not-act SKIPPED ------------
+  # A disconnected display whose `power?` readback RAISES yields an unreadable
+  # prior; the check must NOT act (never power a display it cannot restore) and
+  # must report an honest, schema-valid "did not act": active + skipped + reason
+  # prior_power_unknown with NO restored key. (The pilot room's disconnected
+  # display + requested display.power action hits exactly this path; an active
+  # `unknown` without restored would be rejected by sealed ingest.)
+  settings({
+    profile:         {display_input: "Hdmi1"},
+    confirm_timeout: 0.5,
+    poll_interval:   0.05,
+  })
+  system(:Display_1)[:power] = false
+  system(:Display_1)[:report_power] = true
+  system(:Display_1)[:readback_broken] = false
+  system(:Display_1)[:arm_readback_fail] = false
+  system(:Display_1)[:power_readback_stuck_off] = false
+  system(:Display_1)[:fail_power_set] = false
+  system(:Display_1)[:live_input_override] = nil
+  system(:Display_1)[:set_delay] = 0.0
+  faultset_before = system(:Display_1)[:power_set_count].as_i
+  system(:Display_1)[:raise_power] = true
+  exec(:verify).get
+  fault_dp = find.call(status[:verification]["checks"].as_a, "display", "power")
+  fault_dp["type"].as_s.should eq("active")
+  fault_dp["result"].as_s.should eq("skipped")
+  fault_dp["reason"].as_s.should eq("prior_power_unknown")
+  fault_dp["restored"]?.should be_nil
+  # never acted on the unknown prior — no power set command issued
+  system(:Display_1)[:power_set_count].as_i.should eq(faultset_before)
+  system(:Display_1)[:raise_power] = false
 
   # --- absent / disconnected dependent modules -> absent tuples, no raise -----
   # Every dependent module points at a generic name absent from the system; the
