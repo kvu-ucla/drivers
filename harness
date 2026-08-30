@@ -112,10 +112,32 @@ report() {
   echo '░░░ Starting environment...'
   docker compose up -d &> /dev/null
 
-  exit_code=0
-
   echo '░░░ Starting report...'
-  docker exec placeos-drivers report $@ || exit_code=$?
+
+  # The report tool's exit status alone is NOT a trustworthy pass/fail signal:
+  # the pinned spec-runner image classifies each driver spec purely by the spec
+  # process exit code, and the DriverSpecs runner prints "spec failed" but the
+  # process still exits 0 -- so a red spec run can surface as a green `report`
+  # exit and CI/agents misread red as green. Capture the output (while still
+  # streaming it to the console) and fail CLOSED on every available failure
+  # signal: a non-zero report exit, a non-zero failures/timeouts count in the
+  # summary line, or the driver-spec "spec failed" marker anywhere in the
+  # output. `pipefail` keeps the report's own exit status visible through the
+  # `tee`. The EXIT trap still restores the worktree `.git` on the way out.
+  report_log="$(mktemp)"
+  report_status=0
+  set -o pipefail
+  docker exec placeos-drivers report $@ 2>&1 | tee "${report_log}" || report_status=$?
+  set +o pipefail
+
+  exit_code=0
+  if [ "${report_status}" -ne 0 ]; then
+    exit_code="${report_status}"
+  elif grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts' "${report_log}"; then
+    # report exited 0 but its output evidences spec failures/timeouts.
+    exit_code=1
+  fi
+  rm -f "${report_log}"
 
   down
   exit ${exit_code}
