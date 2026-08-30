@@ -137,7 +137,7 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
   # module must publish on `self[:verification]` on EVERY run. The AVITS trigger
   # readback expects this complete 8-tuple record; a missing/partial record reads
   # as an execution fault. Any tuple not replaced by a real check result is
-  # published fail-closed as `unknown` / `sweep_aborted`.
+  # published fail-closed as a `skipped` / `sweep_aborted` "did not act" tuple.
   SWEEP = [
     {device: "display", check: "input", type: "read"},
     {device: "display", check: "power", type: "active"},
@@ -192,7 +192,7 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     published
   end
 
-  # Pre-seed all 8 sweep tuples fail-closed (`unknown` / `sweep_aborted`) so a
+  # Pre-seed all 8 sweep tuples fail-closed (`skipped` / `sweep_aborted`) so a
   # tuple that never gets a real result is still published in the honest schema.
   private def seed_sweep : Hash(Tuple(String, String), CheckResult)
     seeded = {} of Tuple(String, String) => CheckResult
