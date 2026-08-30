@@ -97,7 +97,13 @@ class MockZoom < DriverSpecs::MockDriver
   end
 
   # Controls:
-  #   fail_exit -> raise without clearing the meeting (an exit we cannot confirm)
+  #   fail_exit    -> raise without clearing the meeting (an exit we cannot confirm)
+  #   noop_exit    -> issued, but the meeting genuinely never ends (stays active)
+  #   unknown_exit -> post-exit meeting_active readback is unknown/nil
+  #   clean_exit   -> a clean self-initiated exit (OnExitMeetingNotification
+  #                   result 0): the room leaves the meeting (meeting_active=false)
+  #                   but NO meeting_ended is ever published (only
+  #                   OnMeetingEndedNotification sets that)
   # Late-start race: the first exit "misses" the meeting because the async start
   # activates exactly as the exit lands; a subsequent exit then ends it.
   def exit_meeting
@@ -108,6 +114,17 @@ class MockZoom < DriverSpecs::MockDriver
       self[:meeting_active] = true
       self[:meeting_ended] = nil
       return "raced"
+    end
+    return "still-active" if self[:noop_exit]?.try(&.as_bool?)
+    if self[:unknown_exit]?.try(&.as_bool?)
+      self[:meeting_active] = nil
+      self[:meeting_ended] = nil
+      return "exited-unknown"
+    end
+    if self[:clean_exit]?.try(&.as_bool?)
+      self[:meeting_active] = false
+      self[:meeting_ended] = nil
+      return "exited-clean"
     end
     self[:meeting_active] = false
     self[:meeting_ended] = {reason: "ended"}
@@ -280,6 +297,63 @@ DriverSpecs.mock_driver "Place::AvitsRoomVerification" do
   exit_err["result"].as_s.should eq("fail")
   exit_err["restored"].as_bool.should eq(false)
   system(:ZoomZRC_1)[:fail_exit] = false
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+
+  # --- Zoom CLEAN self-initiated exit (REGRESSION) --------------------------
+  # OnExitMeetingNotification (result 0) leaves the room with meeting_active=false
+  # but NEVER publishes meeting_ended. The old check REQUIRED meeting_ended and so
+  # reported a genuinely-restored room as restored:false. Confirmation must
+  # succeed on an affirmative meeting_active=false alone.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  system(:ZoomZRC_1)[:clean_exit] = true
+  exec(:verify).get
+  clean = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
+  clean["result"].as_s.should eq("pass")
+  clean["observed"]["ended"].as_bool.should eq(true)
+  clean["restored"].as_bool.should eq(true)
+  system(:ZoomZRC_1)[:meeting_active].should eq(false)
+  system(:ZoomZRC_1)[:clean_exit] = false
+
+  # --- Zoom exit publishes meeting_ended (OnMeetingEndedNotification) --------
+  # The other real end path DOES publish meeting_ended; it must still confirm.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  exec(:verify).get
+  ended = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
+  ended["result"].as_s.should eq("pass")
+  ended["restored"].as_bool.should eq(true)
+  system(:ZoomZRC_1)[:meeting_active].should eq(false)
+  system(:ZoomZRC_1)[:meeting_ended]["reason"].as_s.should eq("ended")
+
+  # --- Zoom meeting stays active after bounded attempts -> restored FALSE ----
+  # The exit is issued but the meeting genuinely never ends; we must never claim
+  # restored while a meeting may still be running. All EXIT_ATTEMPTS (3) fire.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  system(:ZoomZRC_1)[:noop_exit] = true
+  exit_before = system(:ZoomZRC_1)[:exit_count].as_i
+  exec(:verify).get
+  stuck = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
+  stuck["result"].as_s.should eq("fail")
+  stuck["restored"].as_bool.should eq(false)
+  system(:ZoomZRC_1)[:meeting_active].should eq(true)
+  system(:ZoomZRC_1)[:exit_count].as_i.should eq(exit_before + 3)
+  system(:ZoomZRC_1)[:noop_exit] = false
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+
+  # --- Zoom post-exit meeting_active reads UNKNOWN/nil -> does NOT confirm ----
+  # Fail-closed: an unknown meeting_active must never confirm restoration.
+  system(:ZoomZRC_1)[:meeting_active] = false
+  system(:ZoomZRC_1)[:meeting_ended] = nil
+  system(:ZoomZRC_1)[:unknown_exit] = true
+  exec(:verify).get
+  unknown_meet = find.call(status[:verification]["checks"].as_a, "zoom", "meeting")
+  unknown_meet["result"].as_s.should eq("fail")
+  unknown_meet["restored"].as_bool.should eq(false)
+  system(:ZoomZRC_1)[:unknown_exit] = false
   system(:ZoomZRC_1)[:meeting_active] = false
   system(:ZoomZRC_1)[:meeting_ended] = nil
 

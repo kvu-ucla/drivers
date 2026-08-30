@@ -326,10 +326,7 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
         # exit command raised; re-check state below and maybe retry.
       end
 
-      confirmed = wait_until do
-        val = mod.status?(JSON::Any, :meeting_ended)
-        mod.status?(Bool, :meeting_active) != true && !(val.nil? || val.raw.nil?)
-      end
+      confirmed = wait_until { meeting_confirmed_ended?(mod) }
       return true if confirmed
 
       # Not confirmed ended. If a meeting IS (or has become) active, loop and
@@ -342,6 +339,20 @@ class Place::AvitsRoomVerification < PlaceOS::Driver
     meeting_active?(mod) == false
   rescue
     false
+  end
+
+  # Confirm a verification meeting is truly ended. The sole REQUIRED signal is an
+  # AFFIRMATIVE `meeting_active == false` (strict Bool false) — the authoritative
+  # "not in meeting" readback that a clean self-initiated exit sets via
+  # OnExitMeetingNotification (result 0). That path NEVER publishes
+  # `meeting_ended` (only OnMeetingEndedNotification does), so requiring
+  # `meeting_ended` here wrongly reported a genuinely-restored room as
+  # `restored: false`. A `nil`/unknown `meeting_active` must NEVER confirm
+  # (fail-closed: we do not claim a meeting restored when it might still be
+  # running). A non-nil `meeting_ended` or a `MeetingStatusNotInMeeting` status
+  # may corroborate, but none of them is required for confirmation.
+  private def meeting_confirmed_ended?(mod) : Bool
+    meeting_active?(mod) == false
   end
 
   private def meeting_active?(mod) : Bool?
