@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/panasonic/projector/ppnd.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: ppnd_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/powerable"
 require "placeos-driver/interface/muteable"
