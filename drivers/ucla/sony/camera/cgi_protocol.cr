@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/sony/camera/cgi_protocol.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: cgi_protocol_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/camera"
 require "placeos-driver/interface/device_info"
