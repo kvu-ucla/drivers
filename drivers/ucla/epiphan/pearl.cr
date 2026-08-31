@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/epiphan/pearl.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: pearl_readme.md
 # Documentation: https://epiphan-video.github.io/pearl_api_swagger_ui/
 # API Reference: Epiphan Pearl REST API for Pearl-2 and Pearl Mini devices
 # Device Models: Pearl-2, Pearl Mini
