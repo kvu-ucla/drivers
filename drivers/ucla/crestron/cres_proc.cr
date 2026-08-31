@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/cres_proc.cr (vendored 2026-08-30 from ucla-drivers @ 4de617d9c7)
+# Version 2.0.0 — documentation: cres_proc_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/device_info"
 require "json"
