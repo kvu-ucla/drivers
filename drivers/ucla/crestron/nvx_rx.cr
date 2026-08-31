@@ -35,9 +35,13 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
 
   MIN_SYNC_VERTICAL = 1080
 
-  protected def on_authenticated : Nil
+  def on_update
     audio_follows_video = setting?(Bool, :audio_follows_video)
     @audio_follows_video = audio_follows_video.nil? ? true : audio_follows_video
+  end
+
+  protected def on_authenticated : Nil
+    on_update
 
     # NVX hardware can be confiured a either a RX or TX unit - check this
     # device is in the correct mode
@@ -84,6 +88,30 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     switch_layer input
   end
 
+  # Route a transmitter's advertised stream by POSTing its StreamLocation
+  # (RTSP URI) into StreamReceive, then selecting the stream as the source.
+  # https://sdkcon78221.crestron.com/sdk/DM_NVX_REST_API/Content/Topics/Objects/StreamReceive.htm
+  def switch_stream_location(location : String)
+    location = location.strip
+    raise ArgumentError.new("stream location cannot be empty") if location.empty?
+
+    logger.debug { "switching stream location to #{location}" }
+
+    # HTTP POST - `get` returns (not raises) on an aborted task, so surface a
+    # non-2xx device rejection explicitly rather than silently degrading
+    write = update("/StreamReceive/Streams", [{StreamLocation: location}], name: :stream_location).get
+    unless write.state.success?
+      raise "crestron rejected stream location #{location}: #{write.payload}"
+    end
+
+    ws_update "/DeviceSpecific/VideoSource", "Stream", name: :input_video
+    audio_source = @audio_follows_video ? "AudioFollowsVideo" : "Stream"
+    resp = ws_update "/DeviceSpecific/AudioSource", audio_source, name: :input_audio
+
+    query_stream_receive
+    resp
+  end
+
   protected def switch_layer(input : Input, layer : SwitchLayer? = nil)
     layer ||= SwitchLayer::All
 
@@ -98,6 +126,8 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
                   switch_local "USB-C1", layer
                 when "input4", "usbc2"
                   switch_local "USB-C2", layer
+                when .starts_with?("rtsp")
+                  switch_stream_location input
                 else
                   switch_stream input, layer
                 end
@@ -152,6 +182,28 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
   protected def query_device_name
     query("/Localization/Name", name: "device_name") do |name|
       self["device_name"] = name
+    end
+  end
+
+  # Publishes the received stream state - `stream_location` is the routed
+  # RTSP URI (nil when no stream is being received).
+  # https://sdkcon78221.crestron.com/sdk/DM_NVX_REST_API/Content/Topics/Objects/StreamReceive.htm
+  protected def query_stream_receive
+    query("/StreamReceive/Streams", name: "stream_receive") do |streams|
+      publish_stream_receive streams.as_a?.try(&.first?)
+    end
+  end
+
+  # The device pushes partial updates, so only publish the properties present.
+  protected def publish_stream_receive(stream : JSON::Any?) : Nil
+    stream = stream.try &.as_h?
+    return unless stream
+
+    if location = stream["StreamLocation"]?
+      self[:stream_location] = location.as_s?.presence
+    end
+    if status = stream["Status"]?
+      self[:stream_status] = status
     end
   end
 
@@ -325,16 +377,13 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     logger.debug { "blanking output" }
 
     if layer.all? || layer.video?
-      ws_update "/DeviceSpecific/VideoSource", "None", name: :input_video
-      resp = ws_update "/AvRouting/Routes", { {VideoSource: ""} }, name: :switch_video
+      resp = ws_update "/DeviceSpecific/VideoSource", "None", name: :input_video
     end
 
     if @audio_follows_video
-      ws_update "/DeviceSpecific/AudioSource", "AudioFollowsVideo", name: :input_audio
-      resp = ws_update "/AvRouting/Routes", { {AudioSource: ""} }, name: :switch_audio
+      resp = ws_update "/DeviceSpecific/AudioSource", "AudioFollowsVideo", name: :input_audio
     elsif layer.all? || layer.audio?
-      ws_update "/DeviceSpecific/AudioSource", "None", name: :input_audio
-      resp = ws_update "/AvRouting/Routes", { {AudioSource: ""} }, name: :switch_audio
+      resp = ws_update "/DeviceSpecific/AudioSource", "None", name: :input_audio
     end
 
     resp
@@ -429,6 +478,7 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     query_source_name_for(:audio)
     query_device_name
     query_osd_text
+    query_stream_receive
     query_input_state
   end
 
@@ -447,6 +497,12 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
         json = JSON.parse(line)
         if inputs = json.dig?("Device", "AvioV2", "Inputs").try &.as_h?
           process_input_sync_status(inputs)
+        end
+
+        # stream state (Status / StreamLocation) is pushed when the routed
+        # stream changes - including out-of-band changes from other controllers
+        if streams = json.dig?("Device", "StreamReceive", "Streams").try &.as_a?
+          publish_stream_receive streams.first?
         end
       rescue e
         logger.debug { "unsolicited parse error: #{e.message}" }
