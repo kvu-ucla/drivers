@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/sony/displays/bravia.cr (vendored 2026-08-30 from ucla-dev fork @ ca4750ac07)
+# Version 2.0.0 — documentation: bravia_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/device_info"
 require "placeos-driver/interface/powerable"
