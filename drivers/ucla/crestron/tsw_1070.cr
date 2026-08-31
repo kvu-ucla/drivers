@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/tsw_1070.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: tsw_1070_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/device_info"
 require "./tsw_models"
