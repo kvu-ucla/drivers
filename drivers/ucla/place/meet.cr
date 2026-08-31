@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/place/meet.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: meet_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/chat_functions"
 require "placeos-driver/interface/powerable"
