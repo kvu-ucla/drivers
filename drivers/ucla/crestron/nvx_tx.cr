@@ -76,6 +76,17 @@ class Crestron::NvxTx < Crestron::CresNext # < PlaceOS::Driver
     update("/StreamTransmit/Streams", [{MulticastAddress: address}], name: :multicast_address)
   end
 
+  # https://sdkcon78221.crestron.com/sdk/DM_NVX_REST_API/Content/Topics/Objects/StreamTransmit.htm
+  def stream_start
+    logger.debug { "starting stream" }
+    update("/StreamTransmit/Streams", [{Start: true}], name: :stream_start)
+  end
+
+  def stream_stop
+    logger.debug { "stopping stream" }
+    update("/StreamTransmit/Streams", [{Stop: true}], name: :stream_stop)
+  end
+
   def emulate_input_sync(state : Bool = true, idx : Int32 = 1)
     self["input_#{idx}_sync"] = state
   end
@@ -88,9 +99,27 @@ class Crestron::NvxTx < Crestron::CresNext # < PlaceOS::Driver
     end
   end
 
-  protected def query_multicast_address
+  # Queries the stream state, including the advertised `StreamLocation` - the
+  # RTSP URI receivers route to by POSTing it into their StreamReceive object.
+  protected def query_stream_state
     query("/StreamTransmit/Streams", name: "streams") do |streams|
-      self["multicast_address"] = streams.dig(0, "MulticastAddress")
+      publish_stream_state streams.as_a?.try(&.first?)
+    end
+  end
+
+  # The device pushes partial updates, so only publish the properties present.
+  protected def publish_stream_state(stream : JSON::Any?) : Nil
+    stream = stream.try &.as_h?
+    return unless stream
+
+    if address = stream["MulticastAddress"]?
+      self[:multicast_address] = address
+    end
+    if location = stream["StreamLocation"]?
+      self[:stream_location] = location.as_s?.presence
+    end
+    if status = stream["Status"]?
+      self[:stream_status] = status
     end
   end
 
@@ -112,7 +141,7 @@ class Crestron::NvxTx < Crestron::CresNext # < PlaceOS::Driver
   protected def update_source_info
     query_stream_name
     query_nax_address
-    query_multicast_address
+    query_stream_state
     query_source_name_for(:video)
     query_source_name_for(:audio)
   end
@@ -121,12 +150,18 @@ class Crestron::NvxTx < Crestron::CresNext # < PlaceOS::Driver
     raw_json = String.new data
     logger.debug { "Crestron sent: #{raw_json}" }
 
-    return unless raw_json.includes? "AudioVideoInputOutput"
+    return unless raw_json.includes?("AudioVideoInputOutput") || raw_json.includes?("StreamTransmit")
     raw_json.lines.each do |line|
       next if line.empty?
 
       begin
         payload = JSON.parse(line)
+
+        # stream state (Status / StreamLocation / MulticastAddress) is pushed
+        # when transmission starts, stops or is re-addressed
+        if streams = payload.dig?("Device", "StreamTransmit", "Streams").try &.as_a?
+          publish_stream_state streams.first?
+        end
 
         # we're checking if a device is plugged into a port
         # Device/AudioVideoInputOutput/Inputs/0/Ports/0/IsSyncDetected
@@ -160,5 +195,4 @@ class Crestron::NvxTx < Crestron::CresNext # < PlaceOS::Driver
       end
     end
   end
-  
 end
