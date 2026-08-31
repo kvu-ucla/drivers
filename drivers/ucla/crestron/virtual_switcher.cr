@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/virtual_switcher.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: virtual_switcher_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/switchable"
 require "placeos-driver/interface/muteable"
