@@ -1,4 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/nvx_tx.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
+# Version 2.0.0 — documentation: nvx_tx_readme.md
 require "./cres_next"
 require "placeos-driver/interface/switchable"
 
