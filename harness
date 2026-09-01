@@ -153,6 +153,59 @@ build() {
                      build build $@
 }
 
+# Run a single driver's spec locally (host `crystal`, no docker report tool) and
+# fail CLOSED. `crystal spec` with the DriverSpecs mock_driver runner is
+# fail-OPEN: it prints "... spec failed" and the assertion, but the process
+# still exits 0, so callers cannot trust its exit status as proof of success.
+# This wrapper derives the verdict from the runner's own markers instead: any
+# "spec failed"/failures/timeouts marker, OR a missing "... spec passed" marker
+# (crash, hang, transport error), OR a non-zero compile yields a NON-ZERO exit.
+spec() {
+  local spec_arg="${1:-}"
+  [ -n "${spec_arg}" ] || fail "Usage: harness spec <driver.cr | driver_spec.cr>"
+
+  # Accept either the driver source or the _spec.cr file; derive the other.
+  local src spec_file
+  case "${spec_arg}" in
+    *_spec.cr) spec_file="${spec_arg}"; src="${spec_arg%_spec.cr}.cr" ;;
+    *.cr)      src="${spec_arg}";       spec_file="${spec_arg%.cr}_spec.cr" ;;
+    *)         fail "Expected a .cr driver or _spec.cr file, got: ${spec_arg}" ;;
+  esac
+  [ -f "${src}" ]       || fail "Driver source not found: ${src}"
+  [ -f "${spec_file}" ] || fail "Spec not found: ${spec_file}"
+
+  # The DriverSpecs runner needs a redis; it launches drivers against a mock raw
+  # TCP server. Check reachability up front so a missing redis fails fast with a
+  # clear message rather than a hang.
+  if ! (exec 3<>/dev/tcp/127.0.0.1/6379) 2>/dev/null; then
+    fail "Redis not reachable on 127.0.0.1:6379. Start one first, e.g.:
+  docker run -d --rm --name spec-redis -p 6379:6379 redis:alpine"
+  fi
+  exec 3>&- 2>/dev/null || true
+
+  # DriverSpecs launches every driver against a mock raw TCP server, so the
+  # binary must be compiled with all transports or it aborts with a transport
+  # error instead of running the spec.
+  local bin; bin="$(mktemp)"
+  echo "░░░ Compiling ${src} (all transports)..."
+  crystal build "${src}" -Dplaceos_all_transports -o "${bin}" || { rm -f "${bin}"; fail "Driver failed to compile"; }
+
+  echo "░░░ Running ${spec_file}..."
+  local spec_log; spec_log="$(mktemp)"
+  SPEC_RUN_DRIVER="${bin}" crystal spec "${spec_file}" 2>&1 | tee "${spec_log}" || true
+
+  local exit_code=0
+  if grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts' "${spec_log}"; then
+    exit_code=1
+  elif ! grep -q '\.\.\. spec passed' "${spec_log}"; then
+    echo "░░░ No '... spec passed' marker found -> failing closed." >&2
+    exit_code=1
+  fi
+
+  rm -f "${bin}" "${spec_log}"
+  exit ${exit_code}
+}
+
 usage() {
   cat <<EOF
 Usage: harness [-h|--help] [command]
@@ -161,6 +214,7 @@ Helper script for interfacing with the PlaceOS Driver spec runner
 
 Command:
     report                  check all drivers' compilation status
+    spec <driver|_spec.cr>  run one driver's spec locally, failing closed
     up                      starts the harness
     down                    stops the harness
     build                   builds drivers and uploads them to S3
@@ -180,6 +234,9 @@ shift
 case $command in
   report)
     report $@
+    ;;
+  spec)
+    spec $@
     ;;
   build)
     build $@

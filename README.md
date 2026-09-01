@@ -17,12 +17,20 @@ Helper script for interfacing with the PlaceOS Driver spec runner
 
 Command:
     report                  check all drivers' compilation status
+    spec <driver|_spec.cr>  run one driver's spec locally, failing closed
     up                      starts the harness
     down                    stops the harness
     build                   builds drivers and uploads them to S3
     format                  formats driver code
     help                    display this message
 ```
+
+> `crystal spec` with the DriverSpecs mock runner is fail-*open*: it prints
+> `... spec failed` but the process still exits `0`, so its exit status cannot be
+> trusted as proof of success. `./harness spec <driver>` builds the driver with
+> all transports, runs its spec against a local redis, and exits **non-zero**
+> whenever the run is not a clean pass. `./harness report` fails closed the same
+> way for the docker/CI path.
 
 To spin up the test harness, clone the repository and run...
 
