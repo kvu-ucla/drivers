@@ -1,6 +1,6 @@
 # Shure IntelliMix Room Audio Processor (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/shure/intellimix_room.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18).
 
@@ -10,10 +10,7 @@ Controls Shure IntelliMix Room DSP software over its TCP command-string protocol
 
 ## Settings
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `poll_channels` | Bool | `true` | Declared in `default_settings`; not read by the current driver logic. |
-| `channel_count` | Int | `8` | Declared in `default_settings`; not read by the current driver logic. |
+The driver has no settings.
 
 ## Status keys
 
@@ -46,6 +43,10 @@ Status keys are derived from `< REP … >` responses:
 | `get_na_device_name` / `get_chan_config` / `get_chan_count` | Device/channel queries. |
 | `get_lic_exp_date` / `get_lic_type` / `get_lic_valid` | Licensing queries. |
 | `mute(state, index, layer)` | Muteable interface — maps audio layers to `set_device_audio_mute`. |
+
+## 2.0.1 (2026-09-01)
+
+- Removed the unread `poll_channels` and `channel_count` settings (honest settings surface; the recurring `GET ALL` poll already covers every channel).
 
 ## 2.0.0 (2026-08-31)
 

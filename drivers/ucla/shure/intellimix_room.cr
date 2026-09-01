@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/shure/intellimix_room.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
-# Version 2.0.0 — documentation: intellimix_room_readme.md
+# Version 2.0.1 — documentation: intellimix_room_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/device_info"
 require "placeos-driver/interface/muteable"
@@ -15,11 +15,6 @@ class Shure::IntellimixRoom < PlaceOS::Driver
   descriptive_name "Shure IntelliMix Room Audio Processor (UCLA)"
   generic_name :Mixer
   description "Software-based digital signal processing for Shure networked microphones"
-
-  default_settings({
-    poll_channels: true,
-    channel_count: 8,
-  })
 
   def connected
     # Shure uses space + > as the response terminator
