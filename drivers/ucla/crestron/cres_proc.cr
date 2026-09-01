@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/cres_proc.cr (vendored 2026-08-30 from ucla-drivers @ 4de617d9c7)
-# Version 2.0.0 — documentation: cres_proc_readme.md
+# Version 2.0.1 — documentation: cres_proc_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/device_info"
 require "json"
@@ -10,9 +10,6 @@ class Crestron::SIMPLInterface < PlaceOS::Driver
   descriptive_name "Crestron - SIMPL Interface (UCLA)"
   generic_name :CrestronInterface
   tcp_port 9001
-
-  # Example setting (unused here but kept for completeness)
-  default_settings({normally_open: false})
 
   # Private, authoritative state cache
   @state : Bool? = nil

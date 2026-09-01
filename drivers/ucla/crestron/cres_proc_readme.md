@@ -1,6 +1,6 @@
 # Crestron - SIMPL Interface (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/cres_proc.cr` (vendored 2026-08-30 from ucla-drivers @ 4de617d9c7). Based on the production pin — the commit production actually runs — rather than repo HEAD.
 
@@ -10,11 +10,7 @@ Talks to a SIMPL bridge program running on a Crestron processor over raw TCP (po
 
 ## Settings
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `normally_open` | Bool | `false` | Declared in `default_settings` but not read by the driver logic (kept as an example setting). |
-
-No credentials are required.
+The driver has no settings. No credentials are required.
 
 ## Status keys
 
@@ -31,6 +27,10 @@ No credentials are required.
 | `do_poll` | Alias for `query` (used by the 50-second poll). |
 | `state` | Returns the cached boolean state (nil until first response). |
 | `device_info` | Returns the static descriptor described above. |
+
+## 2.0.1 (2026-09-01)
+
+- Removed the unread `normally_open` example setting from `default_settings` (honest settings surface — the pinned base has no inversion logic reading it).
 
 ## 2.0.0 (2026-08-31)
 
