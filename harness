@@ -155,14 +155,18 @@ build() {
 
 # Run a single driver's spec locally (host `crystal`, no docker report tool) and
 # fail CLOSED. `crystal spec` with the DriverSpecs mock_driver runner is
-# fail-OPEN: it prints "... spec failed" and the assertion, but the process
-# still exits 0, so callers cannot trust its exit status as proof of success.
-# This wrapper derives the verdict from the runner's own markers instead: any
-# "spec failed"/failures/timeouts marker, OR a missing "... spec passed" marker
-# (crash, hang, transport error), OR a non-zero compile yields a NON-ZERO exit.
+# fail-OPEN for assertion failures: it prints "... spec failed" but still exits
+# 0, so callers cannot trust its exit status alone. This wrapper combines the
+# spec process status with the runner's markers -- it exits NON-ZERO unless the
+# spec process exited 0 AND a genuine "... spec passed" marker is present AND no
+# "spec failed"/failures/timeouts marker matched. That way a compile error or a
+# top-level crash (non-zero process exit) and an assertion failure (marker) are
+# both caught, and a pass marker from an earlier block cannot mask a later crash.
 spec() {
-  local spec_arg="${1:-}"
-  [ -n "${spec_arg}" ] || fail "Usage: harness spec <driver.cr | driver_spec.cr>"
+  # Exactly one target; more than one would let a passing first target mask a
+  # failing/nonexistent second one.
+  [ "$#" -eq 1 ] || fail "Usage: harness spec <driver.cr | driver_spec.cr> (exactly one target)"
+  local spec_arg="$1"
 
   # Accept either the driver source or the _spec.cr file; derive the other.
   local src spec_file
@@ -192,10 +196,20 @@ spec() {
 
   echo "░░░ Running ${spec_file}..."
   local spec_log; spec_log="$(mktemp)"
-  SPEC_RUN_DRIVER="${bin}" crystal spec "${spec_file}" 2>&1 | tee "${spec_log}" || true
+  # `crystal spec` is fail-open for DriverSpecs assertion failures, but it DOES
+  # exit non-zero on a spec compile error or a top-level/unhandled crash. Keep
+  # that status (pipefail preserves it through the tee) AND cross-check the
+  # runner's markers below.
+  local spec_status=0
+  set -o pipefail
+  SPEC_RUN_DRIVER="${bin}" crystal spec "${spec_file}" 2>&1 | tee "${spec_log}" || spec_status=$?
+  set +o pipefail
 
   local exit_code=0
-  if grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts' "${spec_log}"; then
+  if [ "${spec_status}" -ne 0 ]; then
+    # Compile error, top-level raise, or any other non-zero spec process exit.
+    exit_code="${spec_status}"
+  elif grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts' "${spec_log}"; then
     exit_code=1
   elif ! grep -q '\.\.\. spec passed' "${spec_log}"; then
     echo "░░░ No '... spec passed' marker found -> failing closed." >&2

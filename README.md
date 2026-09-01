@@ -25,12 +25,14 @@ Command:
     help                    display this message
 ```
 
-> `crystal spec` with the DriverSpecs mock runner is fail-*open*: it prints
-> `... spec failed` but the process still exits `0`, so its exit status cannot be
-> trusted as proof of success. `./harness spec <driver>` builds the driver with
-> all transports, runs its spec against a local redis, and exits **non-zero**
-> whenever the run is not a clean pass. `./harness report` fails closed the same
-> way for the docker/CI path.
+> `crystal spec` with the DriverSpecs mock runner is fail-*open* for assertion
+> failures: it prints `... spec failed` but the process still exits `0`, so its
+> exit status alone cannot be trusted as proof of success. `./harness spec
+> <driver>` builds the driver with all transports, runs its spec against a local
+> redis, and exits **non-zero** unless the spec process exits `0`, a genuine
+> `... spec passed` marker is present, and no failure marker appears — so
+> assertion failures, compile errors, and crashes all fail closed. `./harness
+> report` fails closed the same way for the docker/CI path.
 
 To spin up the test harness, clone the repository and run...
 
