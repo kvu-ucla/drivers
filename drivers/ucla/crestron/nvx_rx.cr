@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/nvx_rx.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
-# Version 2.0.0 — documentation: nvx_rx_readme.md
+# Version 2.0.1 — documentation: nvx_rx_readme.md
 require "./cres_next"
 require "placeos-driver/interface/switchable"
 require "placeos-driver/interface/standby_image"
@@ -89,8 +89,11 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
     switch_layer input
   end
 
-  # Route a transmitter's advertised stream by POSTing its StreamLocation
-  # (RTSP URI) into StreamReceive, then selecting the stream as the source.
+  # Route a transmitter's advertised stream by writing its StreamLocation
+  # (RTSP URI) into StreamReceive over the websocket - like every other
+  # mutation - then selecting the stream as the source. Device rejection is
+  # either a non-zero StatusId ack or a silent ignore (no ack at all), which
+  # surfaces as a queue timeout; both abort the task.
   # https://sdkcon78221.crestron.com/sdk/DM_NVX_REST_API/Content/Topics/Objects/StreamReceive.htm
   def switch_stream_location(location : String)
     location = location.strip
@@ -98,9 +101,9 @@ class Crestron::NvxRx < Crestron::CresNext # < PlaceOS::Driver
 
     logger.debug { "switching stream location to #{location}" }
 
-    # HTTP POST - `get` returns (not raises) on an aborted task, so surface a
-    # non-2xx device rejection explicitly rather than silently degrading
-    write = update("/StreamReceive/Streams", [{StreamLocation: location}], name: :stream_location).get
+    # `get` returns (not raises) on an aborted task, so surface a device
+    # rejection explicitly rather than silently degrading
+    write = ws_update("/StreamReceive/Streams", [{StreamLocation: location}], name: :stream_location).get
     unless write.state.success?
       raise "crestron rejected stream location #{location}: #{write.payload}"
     end

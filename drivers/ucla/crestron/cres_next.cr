@@ -97,13 +97,55 @@ abstract class Crestron::CresNext < PlaceOS::Driver
         next unless line.includes? %("Results":)
 
         begin
-          task.success JSON.parse(line)
+          ack = JSON.parse(line)
+          if failure = ws_ack_failure(ack)
+            task.abort "crestron rejected websocket update: #{failure}"
+          else
+            task.success ack
+          end
           break
         rescue error
           logger.warn(exception: error) { "failed to parse Crestron ws update response: #{line}" }
         end
       end
     end
+  end
+
+  # Inspects an Actions/Results ack for a device rejection, returning a
+  # description of the first failing result or nil when every result reports
+  # `StatusId == 0`. An ack that can't be positively verified (missing or
+  # malformed fields) is treated as a success with a warning - only a
+  # confirmed non-zero StatusId aborts. Note an invalid write may instead be
+  # silently ignored (no ack at all), which surfaces as a queue timeout.
+  private def ws_ack_failure(ack : JSON::Any) : String?
+    actions = ack.as_h?.try(&.["Actions"]?).try(&.as_a?)
+    if actions.nil? || actions.empty?
+      logger.warn { "unable to verify Crestron ack, assuming success: #{ack}" }
+      return nil
+    end
+
+    actions.each do |action|
+      results = action.as_h?.try(&.["Results"]?).try(&.as_a?)
+      if results.nil? || results.empty?
+        logger.warn { "unable to verify Crestron ack action, assuming success: #{action}" }
+        next
+      end
+
+      results.each do |result|
+        status_id = result.as_h?.try(&.["StatusId"]?).try(&.as_i64?)
+        unless status_id
+          logger.warn { "unable to verify Crestron ack result, assuming success: #{result}" }
+          next
+        end
+        next if status_id.zero?
+
+        path = result.as_h?.try(&.["Path"]?).try(&.as_s?).presence || "unknown path"
+        info = result.as_h?.try(&.["StatusInfo"]?).try(&.as_s?).presence || "no status info"
+        return "#{path}: #{info} (StatusId #{status_id})"
+      end
+    end
+
+    nil
   end
 
   @[PlaceOS::Driver::Security(Level::Support)]
@@ -207,7 +249,12 @@ abstract class Crestron::CresNext < PlaceOS::Driver
 
   private def apply_http_changes(request_path : String, payload : String, **options)
     queue(**options) do |task|
-      response = post request_path, body: payload, headers: HTTP::Headers{"CREST-XSRF-TOKEN" => @xsrf_token}
+      # fw 7.3 answers a JSON body sent without Content-Type with an HTTP 500
+      # (generic XHTML error page) - the header is required, not decorative
+      response = post request_path, body: payload, headers: HTTP::Headers{
+        "CREST-XSRF-TOKEN" => @xsrf_token,
+        "Content-Type"     => "application/json",
+      }
       logger.debug { "updated requested for #{request_path}, response was #{response.body}" }
 
       # no real need to parse the responses as the changes will be sent down the websocket

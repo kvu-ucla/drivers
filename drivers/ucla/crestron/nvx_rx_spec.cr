@@ -86,24 +86,18 @@ DriverSpecs.mock_driver "Crestron::NvxRx" do
   location = "rtsp://192.168.0.10:554/live.sdp"
   switch_result = exec(:switch_stream_location, location)
 
-  # the route is made by POSTing the transmitter's advertised StreamLocation
-  expect_http_request do |request, response|
-    request.method.should eq("POST")
-    request.path.should eq("/Device/StreamReceive/Streams")
-    request.headers["CREST-XSRF-TOKEN"]?.should eq("1234")
-    body = request.body.try(&.gets_to_end) || ""
-    body.should eq(%({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.10:554/live.sdp"}]}}}))
-    response.status_code = 200
-    response.print %({"Actions":[{"Results":[{"StatusId":9}]}]})
-  end
+  # the route is made by writing the transmitter's advertised StreamLocation
+  # over the websocket, acked with a StatusId 0 Results entry
+  should_send %({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.10:554/live.sdp"}]}}})
+  responds %({"Actions":[{"Operation":"SetPartial","Results":[{"Path":"Device.StreamReceive.Streams[0]","Property":"StreamLocation","StatusId":0,"StatusInfo":"OK"}],"TargetObject":"StreamReceive","Version":"2.1.0"}]})
 
   # video source selected and audio follows video - any /AvRouting/Routes
   # write here would fail these should_send expectations
   should_send %({"Device":{"DeviceSpecific":{"VideoSource":"Stream"}}})
-  responds %({"Actions":[{"Results":[{"StatusId":9}]}]})
+  responds %({"Actions":[{"Results":[{"StatusId":0}]}]})
 
   should_send %({"Device":{"DeviceSpecific":{"AudioSource":"AudioFollowsVideo"}}})
-  responds %({"Actions":[{"Results":[{"StatusId":9}]}]})
+  responds %({"Actions":[{"Results":[{"StatusId":0}]}]})
 
   should_send "/Device/StreamReceive/Streams"
   responds %({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.10:554/live.sdp","Status":"Streaming"}]}}})
@@ -121,35 +115,30 @@ DriverSpecs.mock_driver "Crestron::NvxRx" do
 
   switch_result = exec(:switch_stream_location, location)
 
-  expect_http_request do |request, response|
-    body = request.body.try(&.gets_to_end) || ""
-    body.should eq(%({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.10:554/live.sdp"}]}}}))
-    response.status_code = 200
-    response.print %({"Actions":[{"Results":[{"StatusId":9}]}]})
-  end
+  should_send %({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.10:554/live.sdp"}]}}})
+  responds %({"Actions":[{"Operation":"SetPartial","Results":[{"Path":"Device.StreamReceive.Streams[0]","Property":"StreamLocation","StatusId":0,"StatusInfo":"OK"}],"TargetObject":"StreamReceive","Version":"2.1.0"}]})
 
   should_send %({"Device":{"DeviceSpecific":{"VideoSource":"Stream"}}})
-  responds %({"Actions":[{"Results":[{"StatusId":9}]}]})
+  responds %({"Actions":[{"Results":[{"StatusId":0}]}]})
 
   should_send %({"Device":{"DeviceSpecific":{"AudioSource":"Stream"}}})
-  responds %({"Actions":[{"Results":[{"StatusId":9}]}]})
+  responds %({"Actions":[{"Results":[{"StatusId":0}]}]})
 
   should_send "/Device/StreamReceive/Streams"
   responds %({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.10:554/live.sdp","Status":"Streaming"}]}}})
 
   switch_result.get
 
-  # a device rejection (non-2xx) surfaces as a loud driver error and stops
-  # the switch sequence - no VideoSource/AudioSource writes follow
+  # a device rejection (non-zero StatusId ack) surfaces as a loud driver
+  # error and stops the switch sequence - no VideoSource/AudioSource writes
+  # follow. (An invalid write may instead be silently ignored - no ack at
+  # all - which surfaces as a queue timeout and aborts the same way.)
   fail_result = exec(:switch_stream_location, "rtsp://192.168.0.66:554/dead.sdp")
 
-  expect_http_request do |request, response|
-    request.path.should eq("/Device/StreamReceive/Streams")
-    response.status_code = 502
-    response.print %({"error": "bad gateway"})
-  end
+  should_send %({"Device":{"StreamReceive":{"Streams":[{"StreamLocation":"rtsp://192.168.0.66:554/dead.sdp"}]}}})
+  responds %({"Actions":[{"Operation":"SetPartial","Results":[{"Path":"Device.StreamReceive.Streams[0]","Property":"StreamLocation","StatusId":2,"StatusInfo":"Invalid stream location"}],"TargetObject":"StreamReceive","Version":"2.1.0"}]})
 
-  expect_raises(PlaceOS::Driver::RemoteException, /failed to apply changes/) do
+  expect_raises(PlaceOS::Driver::RemoteException, /rejected stream location/) do
     fail_result.get
   end
 

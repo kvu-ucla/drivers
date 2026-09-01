@@ -1,6 +1,6 @@
 # Crestron NVX Transmitter (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/nvx_tx.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18). Built on the shared UCLA `cres_next.cr` / `cres_next_auth.cr` base.
 
@@ -51,6 +51,12 @@ The driver publishes the stream advertisement (`stream_location`, the RTSP URI) 
 | `authenticate` / `logout` | Session management (shared auth module). |
 | `manual_send(payload)` | Sends a raw websocket payload (Support level). |
 | `reboot(now)` | Reboots the device (Administrator level). |
+
+## 2.0.1 (2026-09-01)
+
+- Shared base `apply_ws_changes` now verifies the websocket ack: every `Actions[].Results[]` entry must report `StatusId == 0`, otherwise the task aborts loudly with the failing `Path`/`StatusInfo`. Acks that can't be positively verified keep the old assume-success behaviour with a warning.
+- Shared base HTTP write helper (`apply_http_changes`) now sends `Content-Type: application/json` — fw 7.3 (verified on DM-NVX-384 @ 7.3.5149.23092) answers a JSON body without it with an HTTP 500 generic error page. This hardens the encoder's own HTTP writes (`multicast_address`, `stream_start`/`stream_stop`, output/input config).
+- Receiver counterpart: the fw 7.3 rejection broke `switch_stream_location`, which now writes StreamLocation over the websocket instead of HTTP — see `nvx_rx_readme.md` 2.0.1.
 
 ## 2.0.0 (2026-08-31)
 
