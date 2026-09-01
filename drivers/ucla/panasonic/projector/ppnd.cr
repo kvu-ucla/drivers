@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/panasonic/projector/ppnd.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
-# Version 2.0.0 — documentation: ppnd_readme.md
+# Version 2.1.0 — documentation: ppnd_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/powerable"
 require "placeos-driver/interface/muteable"
@@ -43,7 +43,6 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     },
     api_version:   "v1",
     poll_interval: 30,
-    enable_https:  true,
   })
 
   @digest_auth : HTTP::Client::DigestAuth = HTTP::Client::DigestAuth.new
@@ -255,7 +254,7 @@ class Panasonic::Projector::PPND < PlaceOS::Driver
     input = Input::HDMI1 if input.hdmi?
     @input_target = input
 
-    unmute if self[:mute]?
+    unmute if self[:av_mute]?
 
     input_str = INPUT_MAPPING[input]
     body = {"input-state": input_str}.to_json

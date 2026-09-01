@@ -1,6 +1,6 @@
 # Panasonic Projector PPND API (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.1.0 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/panasonic/projector/ppnd.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18).
 
@@ -15,7 +15,6 @@ Controls Panasonic projectors via the PPND WEB API (`https://<host>/api/v1/`, JS
 | `digest_auth` | Object | `{username: "admin", password: "panasonic"}` | Digest credentials. |
 | `api_version` | String | `"v1"` | API version segment in request paths. |
 | `poll_interval` | Int32 | `30` | Status poll interval in seconds. |
-| `enable_https` | Bool | `true` | Declared in `default_settings` but not read by the driver logic (transport scheme comes from the module URI). |
 
 ## Status keys
 
@@ -39,7 +38,7 @@ Controls Panasonic projectors via the PPND WEB API (`https://<host>/api/v1/`, JS
 | Method | Description |
 |---|---|
 | `power(state)` / `power?` / `query_power_status` | Power control with target re-assertion. |
-| `switch_to(input)` | Inputs: `COMPUTER`, `HDMI` (maps to HDMI1), `HDMI1`, `HDMI2`, `MemoryViewer`, `Network`, `DigitalLink`. (See Known issues: the intended unmute-before-switch never triggers.) |
+| `switch_to(input)` | Inputs: `COMPUTER`, `HDMI` (maps to HDMI1), `HDMI1`, `HDMI2`, `MemoryViewer`, `Network`, `DigitalLink`. |
 | `query_input_status` | Re-reads the input (re-asserts a pending target). |
 | `mute(state, index, layer)` / `query_av_mute_status` | AV shutter control. |
 | `freeze(state)` / `query_freeze_status` | Image freeze (projector must be on). |
@@ -51,6 +50,11 @@ Controls Panasonic projectors via the PPND WEB API (`https://<host>/api/v1/`, JS
 | `configure_ntp(sync, server)` / `query_ntp_settings` | NTP configuration. |
 | `configure_https(enabled)` / `query_https_config` | HTTPS configuration. |
 | `device_info` | Descriptor from cached identity: make `Panasonic`, model with `Projector` fallback, serial, MAC, configured host, projector name as hostname. |
+
+## 2.1.0 (2026-09-01)
+
+- `switch_to` now opens the shutter before switching inputs when the driver's reported shutter state (`av_mute`) is on — behavior now matches the long-documented intent of the unmute-before-switch step.
+- Removed the unused `enable_https` setting from `default_settings`; the transport scheme comes from the module URI and device-side HTTPS is controlled by the explicit `configure_https` command.
 
 ## 2.0.0 (2026-08-31)
 
@@ -64,5 +68,4 @@ Controls Panasonic projectors via the PPND WEB API (`https://<host>/api/v1/`, JS
 
 ## Known issues / residuals
 
-- **Unmute-before-switch never triggers (driver defect, future fix):** `switch_to` intends to open the shutter before switching, but it tests `self[:mute]?` (`ppnd.cr:257`) while the shutter command/query paths publish feedback only as `av_mute` (`ppnd.cr:298-323`) — the driver never recognises its own reported shutter state, so no `/av-mute` off command is sent and a shuttered projector stays dark after an input switch. Correcting the driver to test `av_mute` is future work; unmute explicitly via `mute(false)` in the meantime.
 - **Pre-existing red baseline spec (accepted):** the module never connects under the spec harness because `on_load → on_update → query_device_info` blocks on an HTTP request the spec never services. The failure predates and is untouched by the UCLA changes (log signatures identical to baseline); fixing it needs spec surgery.
