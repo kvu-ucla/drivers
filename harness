@@ -121,11 +121,13 @@ report() {
   # exit and CI/agents misread red as green. Capture the output (while still
   # streaming it to the console) and fail CLOSED on every available failure
   # signal: a non-zero report exit, a non-zero failures/timeouts count in the
-  # summary line, the driver-spec "spec failed" marker, or a non-zero nested
-  # driver-process exit ("Driver terminated with:"/"driver process exited with:"
-  # -- a clean run always prints "... with: 0") anywhere in the output.
-  # `pipefail` keeps the report's own exit status visible through the `tee`. The
-  # EXIT trap still restores the worktree `.git` on the way out.
+  # summary line, the driver-spec "spec failed" marker, or an abnormal nested
+  # driver-process exit anywhere in the output. The runner logs "driver process
+  # exited with: <code>" ONLY on an abnormal child exit (matched unqualified, so
+  # it catches the "-1" signal-kill sentinel too); "Driver terminated with:" is
+  # matched excluding the healthy 0. `pipefail` keeps the report's own exit
+  # status visible through the `tee`. The EXIT trap still restores the worktree
+  # `.git` on the way out.
   report_log="$(mktemp)"
   report_status=0
   set -o pipefail
@@ -135,7 +137,7 @@ report() {
   exit_code=0
   if [ "${report_status}" -ne 0 ]; then
     exit_code="${report_status}"
-  elif grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts|Driver terminated with: [1-9]|driver process exited with: [1-9]' "${report_log}"; then
+  elif grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts|Driver terminated with: [1-9]|driver process exited with:' "${report_log}"; then
     # report exited 0 but its output evidences spec failures/timeouts/crashes.
     exit_code=1
   fi
@@ -203,9 +205,11 @@ spec() {
   # that status (pipefail preserves it through the tee) AND cross-check the
   # runner's markers below. The compiled driver runs as a CHILD of the runner,
   # and that child can exit non-zero (e.g. in on_unload) while the runner still
-  # prints "... spec passed" and the outer process exits 0 -- so a non-zero
-  # "Driver terminated with:"/"driver process exited with:" (a clean run always
-  # prints "Driver terminated with: 0") is also treated as failure.
+  # prints "... spec passed" and the outer process exits 0. The runner logs
+  # "driver process exited with: <code>" ONLY on an abnormal child exit (a clean
+  # run never prints it -- it prints "Driver terminated with: 0"), so that line
+  # is matched unqualified to catch any code including the "-1" signal-kill
+  # sentinel; "Driver terminated with:" is matched excluding the healthy 0.
   local spec_status=0
   set -o pipefail
   SPEC_RUN_DRIVER="${bin}" crystal spec "${spec_file}" 2>&1 | tee "${spec_log}" || spec_status=$?
@@ -215,7 +219,7 @@ spec() {
   if [ "${spec_status}" -ne 0 ]; then
     # Compile error, top-level raise, or any other non-zero spec process exit.
     exit_code="${spec_status}"
-  elif grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts|Driver terminated with: [1-9]|driver process exited with: [1-9]' "${spec_log}"; then
+  elif grep -qE '\.\.\. spec failed|[1-9][0-9]* failures|[1-9][0-9]* timeouts|Driver terminated with: [1-9]|driver process exited with:' "${spec_log}"; then
     exit_code=1
   elif ! grep -q '\.\.\. spec passed' "${spec_log}"; then
     echo "░░░ No '... spec passed' marker found -> failing closed." >&2
