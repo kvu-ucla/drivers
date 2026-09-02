@@ -5,7 +5,19 @@ x-build-client-env: &build-client-env
 services:
   # Driver test harness
   drivers:
-    image: placeos/drivers-spec:latest
+    # Pinned by digest (not the floating :latest tag) so the spec/report
+    # classification behaviour the harness fail-closed hardening relies on
+    # ("... spec failed", failures/timeouts counts, "Driver terminated with:" /
+    # "driver process exited with:" lifecycle lines) can never drift under us
+    # silently. This digest is the multi-arch index digest of
+    # placeos/drivers-spec:latest resolved on 2026-09-01
+    #   image created 2026-08-30, source rev 169fad4fa1bddd331ef8db51da0627c83d0addae,
+    #   Crystal 1.21.0 (the marker strings themselves come from the placeos-driver
+    #   shard, pinned separately in shard.lock -> 8.1.4).
+    # Re-pin: `docker buildx imagetools inspect placeos/drivers-spec:latest`
+    #   (or `docker manifest inspect`) -> copy the top-level index Digest, then
+    #   update the sha256 below and this comment's date/rev.
+    image: placeos/drivers-spec@sha256:7fffd9e3c21cb751223a087dcdf4109c752fcaf7ebcec0e6b6857ab280763f01
     restart: always
     container_name: placeos-drivers
     hostname: drivers
