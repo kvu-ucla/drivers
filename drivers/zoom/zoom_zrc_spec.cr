@@ -539,7 +539,8 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     status[:ai_companion_confirm]?.should be_nil
   end
 
-  it "should mute audio via the mute endpoint" do
+  it "should mute audio via the mute endpoint without writing state optimistically" do
+    status[:mic_mute] = false
     result = exec(:mute_audio, true)
 
     expect_http_request do |request, response|
@@ -550,10 +551,14 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
 
     result.get.should eq(true)
-    status[:mic_mute].should eq(true)
+    # OnUpdateMyAudioStatus owns mic_mute; the POST ack must not clear spinners early
+    status[:mic_mute].should eq(false)
+
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateMyAudioStatus","audioStatus":{"isMuted":true}})))
+    wait_for_zrc_status { status[:mic_mute]? == true }
   end
 
-  it "should unmute audio via the unmute endpoint" do
+  it "should unmute audio via the unmute endpoint without writing state optimistically" do
     result = exec(:mute_audio, false)
 
     expect_http_request do |request, response|
@@ -564,10 +569,14 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
 
     result.get.should eq(false)
-    status[:mic_mute].should eq(false)
+    status[:mic_mute].should eq(true)
+
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateMyAudioStatus","audioStatus":{"isMuted":false}})))
+    wait_for_zrc_status { status[:mic_mute]? == false }
   end
 
-  it "should stop (mute) video via the mute endpoint" do
+  it "should stop (mute) video via the mute endpoint without writing state optimistically" do
+    status[:camera_mute] = false
     result = exec(:mute_video, true)
 
     expect_http_request do |request, response|
@@ -578,10 +587,14 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
 
     result.get.should eq(true)
-    status[:camera_mute].should eq(true)
+    # OnUpdateMyVideoNotification owns camera_mute
+    status[:camera_mute].should eq(false)
+
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateMyVideoNotification","videoStatus":{"sending":false}})))
+    wait_for_zrc_status { status[:camera_mute]? == true }
   end
 
-  it "should start (unmute) video via the unmute endpoint" do
+  it "should start (unmute) video via the unmute endpoint without writing state optimistically" do
     result = exec(:mute_video, false)
 
     expect_http_request do |request, response|
@@ -592,7 +605,40 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
 
     result.get.should eq(false)
-    status[:camera_mute].should eq(false)
+    status[:camera_mute].should eq(true)
+
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateMyVideoNotification","videoStatus":{"sending":true}})))
+    wait_for_zrc_status { status[:camera_mute]? == false }
+  end
+
+  it "should normalize an already-muted video result as idempotent success" do
+    status[:camera_mute] = true
+    result = exec(:mute_video, true)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/video/mute")
+      response.status_code = 200
+      response << %({"result":10,"success":false})
+    end
+
+    result.get.should eq(true)
+    status[:camera_mute].should eq(true)
+  end
+
+  it "should normalize a structured already-unmuted audio error as idempotent success" do
+    status[:mic_mute] = false
+    result = exec(:mute_audio, false)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/audio/unmute")
+      response.status_code = 502
+      response << %({"detail":{"message":"Failed to unmute audio","error_code":10,"error_name":"ZRCSDKERR_ALREADY_IN_THIS_STATE"}})
+    end
+
+    result.get.should eq(false)
+    status[:mic_mute].should eq(false)
   end
 
   it "should set speaker volume" do
@@ -929,6 +975,38 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     expect_raises(PlaceOS::Driver::RemoteException, /get participants failed/) do
       result.get
     end
+  end
+
+  it "coalesces a burst of roster events into a single participants fetch" do
+    status[:participants] = nil
+
+    # the SDK emits several of these per action; the driver must fold the burst
+    # into one trailing GET. Extra fetches would leave unconsumed requests that
+    # poison the next expect_http_request, so a single handler here is the assertion.
+    ["OnUserJoin", "OnInitMeetingParticipants", "OnMeetingParticipantsChanged"].each do |name|
+      event_server.send_event(JSON.parse(%({"event":"#{name}"})))
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/")
+      response.status_code = 200
+      response << %([{"user_id": 7, "name": "Coalesced"}])
+    end
+
+    wait_for_zrc_status { status[:participants]?.try(&.to_s.includes?("Coalesced")) == true }
+
+    # a roster event landing after the fetch queues a fresh trailing refresh
+    event_server.send_event(JSON.parse(%({"event":"OnUserLeave"})))
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/")
+      response.status_code = 200
+      response << %([{"user_id": 7, "name": "Trailing"}])
+    end
+
+    wait_for_zrc_status { status[:participants]?.try(&.to_s.includes?("Trailing")) == true }
   end
 
   it "should confirm a consent prompt and clear its status" do
@@ -1312,6 +1390,40 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     status[:ai_companion_request]?.should be_nil
   end
 
+  it "publishes authoritative AI Companion summary state from its WebSocket callback" do
+    status[:ai_companion_status] = nil
+    status[:ai_companion_summary_on] = nil
+    status[:ai_companion_summary_email_set] = nil
+
+    requested = exec(:ai_companion_on, 32)
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/ai-companion/turn-on")
+      request.query_params["features"].should eq("32")
+      response.status_code = 200
+      response << %({"result":0,"success":true})
+    end
+    requested.get
+    status[:ai_companion_status]?.should be_nil
+    status[:ai_companion_summary_on]?.should be_nil
+
+    enabled = JSON.parse(%({"event":"OnSmartSummaryOn","summaryOn":true,"hasSetEmail":true}))
+    event_server.send_event(enabled)
+    wait_for_zrc_status do
+      status[:ai_companion_status]? == enabled &&
+        status[:ai_companion_summary_on]? == true &&
+        status[:ai_companion_summary_email_set]? == true
+    end
+
+    disabled = JSON.parse(%({"event":"OnSmartSummaryOn","summaryOn":false,"hasSetEmail":true}))
+    event_server.send_event(disabled)
+    wait_for_zrc_status do
+      status[:ai_companion_status]? == disabled &&
+        status[:ai_companion_summary_on]? == false &&
+        status[:ai_companion_summary_email_set]? == true
+    end
+  end
+
   it "ingests and denies a host ask-to-unmute prompt through its SDK response" do
     event = JSON.parse(%({"event":"OnAskUnmuteAudioByHostNotification","show":true,"type":"AskUnmuteAudioTypeUnmuteAudio"}))
     event_server.send_event(event)
@@ -1418,6 +1530,23 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     status[:meeting_will_release].should eq(auto_release)
     status[:meeting_active].should eq(false)
   end
+
+  it "lets an authoritative speaker-volume event replace the requested value" do
+    result = exec(:set_speaker_volume, 170.0)
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/settings/volume/speaker")
+      JSON.parse(request.body.not_nil!)["volume"].should eq(170.0)
+      response.status_code = 200
+      response << %({"volume":170.0})
+    end
+    result.get.should eq(170.0)
+    status[:speaker_volume].should eq(170.0)
+
+    event_server.send_event(JSON.parse(%({"event":"OnCurrentSpeakerVolumeChanged","volume":171.0})))
+    wait_for_zrc_status { status[:speaker_volume]? == 171.0 }
+  end
+
   it "should exit a meeting and reconcile meeting state from the device" do
     status[:consent_prompt] = JSON.parse(%({"event":"OnConsentNotification"}))
     room_notification = JSON.parse(%({"event":"OnMeetingWillReleaseAutomatically","meetingItem":{"meetingNumber":"123"}}))

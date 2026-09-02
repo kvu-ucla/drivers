@@ -87,6 +87,7 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   @ws_generation = 0
   @pending_meeting_password : String?
   @meeting_password_attempted = false
+  @participants_refresh_queued : Bool = false
 
   def on_load
     on_update
@@ -594,8 +595,13 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def mute_audio(state : Bool = true, index : Int32 | String = 0) : Bool
     action = state ? "mute" : "unmute"
     response = post("/api/rooms/#{@room_id}/audio/#{action}", headers: JSON_HEADERS)
-    parse_command_response(response, "#{action} room audio")
-    self[:mic_mute] = state
+    if already_in_requested_state?(response)
+      # no OnUpdateMyAudioStatus will fire for an idempotent request; the
+      # requested state is already a fact, so publish it directly
+      self[:mic_mute] = state
+    else
+      parse_command_response(response, "#{action} room audio")
+    end
     state
   end
 
@@ -604,9 +610,26 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def mute_video(state : Bool = true, index : Int32 | String = 0) : Bool
     action = state ? "mute" : "unmute"
     response = post("/api/rooms/#{@room_id}/video/#{action}", headers: JSON_HEADERS)
-    parse_command_response(response, "#{action} room video")
-    self[:camera_mute] = state
+    if already_in_requested_state?(response)
+      # no OnUpdateMyVideoNotification will fire for an idempotent request; the
+      # requested state is already a fact, so publish it directly
+      self[:camera_mute] = state
+    else
+      parse_command_response(response, "#{action} room video")
+    end
     state
+  end
+
+  # Mute/unmute are desired-state methods, so the SDK's result 10 is a valid
+  # idempotent outcome. Wrapper versions have represented this as either an
+  # HTTP-200 body-level result or a structured non-2xx detail; accept both.
+  private def already_in_requested_state?(response) : Bool
+    data = JSON.parse(response.body)
+    result = data.as_h?.try(&.["result"]?).try(&.as_i?)
+    detail_result = data.as_h?.try(&.["detail"]?).try(&.["error_code"]?).try(&.as_i?)
+    result == ERR_ALREADY_IN_THIS_STATE || detail_result == ERR_ALREADY_IN_THIS_STATE
+  rescue
+    false
   end
 
   # =========================================================
@@ -958,13 +981,21 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
                              "stopped"
                            end
       end
+    when "OnSmartSummaryOn"
+      # This is the authoritative AI Companion meeting-summary state callback.
+      # Direct turn-on/off result 0 only acknowledges the asynchronous request.
+      self[:ai_companion_status] = event
+      summary_on = event["summaryOn"]?.try(&.as_bool?)
+      self[:ai_companion_summary_on] = summary_on unless summary_on.nil?
+      has_set_email = event["hasSetEmail"]?.try(&.as_bool?)
+      self[:ai_companion_summary_email_set] = has_set_email unless has_set_email.nil?
     when "OnNeedPromptStartRecordingDisclaimerUpdate"
       needed = event["need"]?.try(&.as_bool?) || false
       self[:recording_disclaimer_needed] = needed ? true : nil
     when "OnUserJoin", "OnUserLeave", "OnUserUpdate", "OnInitMeetingParticipants", "OnMeetingParticipantsChanged"
       # Roster changed; OnUserUpdate also carries waiting-room/silent-mode
       # participant changes. Re-fetch the authoritative list over REST.
-      spawn { update_participants }
+      queue_participants_refresh
     when "OnUpdateMeetingList"
       # fires when the calendar list changes or a ListMeeting request resolves;
       # payload carries the full list so no follow-up fetch is needed
@@ -987,6 +1018,20 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     end
   rescue e
     logger.warn(exception: e) { "bad event payload: #{message}" }
+  end
+
+  # The SDK emits several roster events per action (join + init + changed can
+  # all fire for one mute press). Coalesce a burst into a single trailing fetch:
+  # events landing inside the window ride the queued refresh; an event landing
+  # after the fetch has started queues a fresh one.
+  private def queue_participants_refresh : Nil
+    return if @participants_refresh_queued
+    @participants_refresh_queued = true
+    spawn do
+      sleep 200.milliseconds
+      @participants_refresh_queued = false
+      update_participants
+    end
   end
 
   private def update_participants : Nil
@@ -1017,6 +1062,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     self[:recording] = "stopped"
     self[:recording_info] = nil
     self[:recording_disclaimer_needed] = nil
+    self[:ai_companion_status] = nil
+    self[:ai_companion_summary_on] = false
+    self[:ai_companion_summary_email_set] = nil
   end
 
   private def reset_room_state : Nil
