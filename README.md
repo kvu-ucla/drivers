@@ -30,9 +30,12 @@ Command:
 > exit status alone cannot be trusted as proof of success. `./harness spec
 > <driver>` builds the driver with all transports, runs its spec against a local
 > redis, and exits **non-zero** unless the spec process exits `0`, a genuine
-> `... spec passed` marker is present, and no failure marker appears — so
-> assertion failures, compile errors, and crashes all fail closed. `./harness
-> report` fails closed the same way for the docker/CI path.
+> `... spec passed` marker is present, and no failure marker appears — where a
+> failure marker also includes a non-zero nested driver-process exit
+> (`Driver terminated with:` / `driver process exited with:` other than `0`), so
+> assertion failures, compile errors, and driver crashes (including a child
+> crash during unload) all fail closed. `./harness report` fails closed the same
+> way for the docker/CI path.
 
 To spin up the test harness, clone the repository and run...
 
