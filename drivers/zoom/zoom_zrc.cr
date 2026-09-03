@@ -770,8 +770,48 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   def get_participants : JSON::Any
     response = get("/api/rooms/#{@room_id}/participants/", headers: JSON_HEADERS)
     data = parse_command_response(response, "get participants")
-    self[:participants] = data
-    data
+
+    # The SDK's GetParticipantsInMeeting excludes silent-mode users (waiting
+    # room / put on hold), so anyone sent to the waiting room vanishes from the
+    # in-meeting list. They are only visible via GetParticipantsInSilentMode,
+    # exposed by the wrapper as the silent-mode endpoint. Merge them back in.
+    silent_response = get("/api/rooms/#{@room_id}/participants/silent-mode", headers: JSON_HEADERS)
+    silent_data = parse_command_response(silent_response, "get waiting-room participants")
+
+    merged = merge_waiting_room_participants(data, silent_data)
+    self[:participants] = merged
+    merged
+  end
+
+  # Fold silent-mode participants into the in-meeting roster flagged with
+  # is_in_waiting_room. Membership in the silent-mode list is the source of
+  # truth: the wrapper's own is_in_waiting_room field is always null because it
+  # reads an attribute (isInWaitingRoom) the SDK does not define — the SDK's
+  # real flag is isInSilentMode, which the REST layer drops.
+  private def merge_waiting_room_participants(data : JSON::Any, silent_data : JSON::Any) : JSON::Any
+    base = data.as_h?
+    waiting = silent_data.as_h?.try(&.["participants"]?).try(&.as_a?)
+    return data unless base
+    return data if waiting.nil? || waiting.empty?
+
+    participants = base["participants"]?.try(&.as_a?) || [] of JSON::Any
+    in_meeting_ids = participants.compact_map { |entry| entry.as_h?.try(&.["user_id"]?) }
+
+    flagged = waiting.compact_map do |participant|
+      entry = participant.as_h?
+      next unless entry
+      # A user in both lists is actually in the meeting; trust that entry.
+      user_id = entry["user_id"]?
+      next if user_id && in_meeting_ids.includes?(user_id)
+      entry = entry.dup
+      entry["is_in_waiting_room"] = JSON::Any.new(true)
+      JSON::Any.new(entry)
+    end
+
+    merged = base.dup
+    merged["participants"] = JSON::Any.new(participants + flagged)
+    merged["count"] = JSON::Any.new((participants.size + flagged.size).to_i64)
+    JSON::Any.new(merged)
   end
 
   # =========================================================
@@ -994,7 +1034,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       self[:recording_disclaimer_needed] = needed ? true : nil
     when "OnUserJoin", "OnUserLeave", "OnUserUpdate", "OnInitMeetingParticipants", "OnMeetingParticipantsChanged"
       # Roster changed; OnUserUpdate also carries waiting-room/silent-mode
-      # participant changes. Re-fetch the authoritative list over REST.
+      # participant changes (isInSilentMode arrives here, and a move to the
+      # waiting room can surface as OnUserLeave). Re-fetch the authoritative
+      # lists over REST — get_participants merges the silent-mode roster.
       queue_participants_refresh
     when "OnUpdateMeetingList"
       # fires when the calendar list changes or a ListMeeting request resolves;

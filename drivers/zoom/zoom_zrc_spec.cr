@@ -955,11 +955,52 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
       request.method.should eq("GET")
       request.path.should eq("/api/rooms/room-1/participants/")
       response.status_code = 200
-      response << %([{"user_id": 1, "name": "Alice"}])
+      response << %({"result":0,"success":true,"participants":[{"user_id":1,"user_name":"Alice","is_in_waiting_room":null}],"count":1})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[],"count":0})
     end
 
     result.get.should_not be_nil
     status[:participants].should_not be_nil
+    status[:participants]["count"].should eq(1)
+  end
+
+  it "merges waiting-room participants from the silent-mode list" do
+    result = exec(:get_participants)
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[{"user_id":16778240,"user_name":"Room","is_host":true,"is_in_waiting_room":null}],"count":1})
+    end
+
+    # the wrapper's is_in_waiting_room is null even for silent-mode users (it
+    # reads an SDK attribute that does not exist); list membership is the truth.
+    # A user in both lists must not be duplicated or flagged.
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[{"user_id":16782336,"user_name":"Kenneth","is_host":false,"is_in_waiting_room":null},{"user_id":16778240,"user_name":"Room","is_host":true,"is_in_waiting_room":null}],"count":2})
+    end
+
+    merged = result.get.not_nil!
+    participants = merged["participants"].as_a
+    participants.size.should eq(2)
+    merged["count"].should eq(2)
+
+    room = participants.find! { |entry| entry["user_id"] == 16778240 }
+    room["is_in_waiting_room"].raw.should be_nil
+
+    waiting = participants.find! { |entry| entry["user_id"] == 16782336 }
+    waiting["is_in_waiting_room"].should eq(true)
+    status[:participants]["participants"].as_a.size.should eq(2)
   end
 
   it "should reject a failed participant query returned with HTTP 200" do
@@ -977,6 +1018,75 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
   end
 
+  it "rejects a failed waiting-room query rather than degrading to the base roster" do
+    # body-level failure: waiting-room users failing silently is the original
+    # bug, so a silent-mode failure must raise, never return the base list
+    result = exec(:get_participants)
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[{"user_id":1,"user_name":"Alice"}],"count":1})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 200
+      response << %({"result":11,"success":false,"participants":[]})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /get waiting-room participants failed/) do
+      result.get
+    end
+
+    # HTTP-level failure on the silent-mode fetch must raise the same way
+    result = exec(:get_participants)
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[{"user_id":1,"user_name":"Alice"}],"count":1})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 502
+      response << %({"detail":"upstream error"})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /get waiting-room participants failed: HTTP 502/) do
+      result.get
+    end
+  end
+
+  it "passes a non-hash participants payload through unchanged" do
+    result = exec(:get_participants)
+
+    # older wrapper shapes returned a bare array; the merge must fall back to
+    # relaying the payload verbatim instead of raising on the missing hash
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/")
+      response.status_code = 200
+      response << %([{"user_id":1,"user_name":"Alice"}])
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[{"user_id":2,"user_name":"Waiting"}],"count":1})
+    end
+
+    expected = JSON.parse(%([{"user_id":1,"user_name":"Alice"}]))
+    result.get.should eq(expected)
+    status[:participants].should eq(expected)
+  end
+
   it "coalesces a burst of roster events into a single participants fetch" do
     status[:participants] = nil
 
@@ -991,7 +1101,14 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
       request.method.should eq("GET")
       request.path.should eq("/api/rooms/room-1/participants/")
       response.status_code = 200
-      response << %([{"user_id": 7, "name": "Coalesced"}])
+      response << %({"result":0,"success":true,"participants":[{"user_id":7,"user_name":"Coalesced"}],"count":1})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[],"count":0})
     end
 
     wait_for_zrc_status { status[:participants]?.try(&.to_s.includes?("Coalesced")) == true }
@@ -1003,7 +1120,14 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
       request.method.should eq("GET")
       request.path.should eq("/api/rooms/room-1/participants/")
       response.status_code = 200
-      response << %([{"user_id": 7, "name": "Trailing"}])
+      response << %({"result":0,"success":true,"participants":[{"user_id":7,"user_name":"Trailing"}],"count":1})
+    end
+
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/participants/silent-mode")
+      response.status_code = 200
+      response << %({"result":0,"success":true,"participants":[],"count":0})
     end
 
     wait_for_zrc_status { status[:participants]?.try(&.to_s.includes?("Trailing")) == true }
