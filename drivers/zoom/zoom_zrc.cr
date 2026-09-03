@@ -784,10 +784,12 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
   end
 
   # Fold silent-mode participants into the in-meeting roster flagged with
-  # is_in_waiting_room. Membership in the silent-mode list is the source of
-  # truth: the wrapper's own is_in_waiting_room field is always null because it
-  # reads an attribute (isInWaitingRoom) the SDK does not define — the SDK's
-  # real flag is isInSilentMode, which the REST layer drops.
+  # is_in_waiting_room. A real boolean from the wrapper is relayed untouched
+  # (fixed wrappers derive the field from the SDK's isInSilentMode flag); a
+  # null or missing value falls back to true, since membership in the
+  # silent-mode list means the user is waiting/on hold — v1.6.0 wrappers
+  # always emit null because they read an attribute (isInWaitingRoom) the SDK
+  # does not define.
   private def merge_waiting_room_participants(data : JSON::Any, silent_data : JSON::Any) : JSON::Any
     base = data.as_h?
     waiting = silent_data.as_h?.try(&.["participants"]?).try(&.as_a?)
@@ -804,7 +806,9 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
       user_id = entry["user_id"]?
       next if user_id && in_meeting_ids.includes?(user_id)
       entry = entry.dup
-      entry["is_in_waiting_room"] = JSON::Any.new(true)
+      unless entry["is_in_waiting_room"]?.try(&.raw).is_a?(Bool)
+        entry["is_in_waiting_room"] = JSON::Any.new(true)
+      end
       JSON::Any.new(entry)
     end
 

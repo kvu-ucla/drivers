@@ -980,27 +980,42 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
       response << %({"result":0,"success":true,"participants":[{"user_id":16778240,"user_name":"Room","is_host":true,"is_in_waiting_room":null}],"count":1})
     end
 
-    # the wrapper's is_in_waiting_room is null even for silent-mode users (it
-    # reads an SDK attribute that does not exist); list membership is the truth.
-    # A user in both lists must not be duplicated or flagged.
+    # is_in_waiting_room precedence on silent-mode entries: a real boolean from
+    # the wrapper is relayed untouched (the fixed wrapper derives it from the
+    # SDK's isInSilentMode flag), while null/absent falls back to true — the
+    # deployed v1.6.0 wrapper always emits null, and list membership means the
+    # user is waiting. Unknown extra fields (is_leaving_silent_mode) must pass
+    # through verbatim. A user in both lists must not be duplicated or flagged.
     expect_http_request do |request, response|
       request.method.should eq("GET")
       request.path.should eq("/api/rooms/room-1/participants/silent-mode")
       response.status_code = 200
-      response << %({"result":0,"success":true,"participants":[{"user_id":16782336,"user_name":"Kenneth","is_host":false,"is_in_waiting_room":null},{"user_id":16778240,"user_name":"Room","is_host":true,"is_in_waiting_room":null}],"count":2})
+      response << %({"result":0,"success":true,"participants":[{"user_id":16782336,"user_name":"Kenneth","is_host":false,"is_in_waiting_room":null},{"user_id":16778240,"user_name":"Room","is_host":true,"is_in_waiting_room":null},{"user_id":16786432,"user_name":"NoField"},{"user_id":16790528,"user_name":"NotWaiting","is_in_waiting_room":false},{"user_id":16794624,"user_name":"Waiting","is_in_waiting_room":true,"is_leaving_silent_mode":true}],"count":5})
     end
 
     merged = result.get.not_nil!
     participants = merged["participants"].as_a
-    participants.size.should eq(2)
-    merged["count"].should eq(2)
+    participants.size.should eq(5)
+    merged["count"].should eq(5)
 
     room = participants.find! { |entry| entry["user_id"] == 16778240 }
     room["is_in_waiting_room"].raw.should be_nil
+    participants.count { |entry| entry["user_id"] == 16778240 }.should eq(1)
 
-    waiting = participants.find! { |entry| entry["user_id"] == 16782336 }
-    waiting["is_in_waiting_room"].should eq(true)
-    status[:participants]["participants"].as_a.size.should eq(2)
+    null_flag = participants.find! { |entry| entry["user_id"] == 16782336 }
+    null_flag["is_in_waiting_room"].should eq(true)
+
+    absent_flag = participants.find! { |entry| entry["user_id"] == 16786432 }
+    absent_flag["is_in_waiting_room"].should eq(true)
+
+    real_false = participants.find! { |entry| entry["user_id"] == 16790528 }
+    real_false["is_in_waiting_room"].should eq(false)
+
+    real_true = participants.find! { |entry| entry["user_id"] == 16794624 }
+    real_true["is_in_waiting_room"].should eq(true)
+    real_true["is_leaving_silent_mode"].should eq(true)
+
+    status[:participants]["participants"].as_a.size.should eq(5)
   end
 
   it "should reject a failed participant query returned with HTTP 200" do
