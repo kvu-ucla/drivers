@@ -1021,6 +1021,22 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
                              "stopped"
                            end
       end
+    when "OnUpdateAirPlayBlackMagicStatus"
+      # Local-content sharing status: BlackMagic is the Zoom Room's HDMI
+      # capture path, air-host is the wireless (AirPlay / direct presentation)
+      # path. Push-only — the SDK exposes no getter — so retain the full
+      # struct alongside the derived keys.
+      # Extraction lives in EventState so specs exercise it below this
+      # method's rescue; the full payload is assigned last so a raise mid
+      # extraction surfaces in specs as a missing sharing_status update
+      # instead of a swallowed "bad event payload" log line.
+      if sharing = EventState.sharing_payload(event)
+        hdmi, share_key, airplay = EventState.sharing_signals(sharing)
+        self[:hdmi_sharing] = hdmi unless hdmi.nil?
+        self[:sharing_key] = share_key unless share_key.nil?
+        self[:airplay_client_connected] = airplay unless airplay.nil?
+        self[:sharing_status] = sharing
+      end
     when "OnSmartSummaryOn"
       # This is the authoritative AI Companion meeting-summary state callback.
       # Direct turn-on/off result 0 only acknowledges the asynchronous request.
@@ -1107,6 +1123,11 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     self[:ai_companion_status] = nil
     self[:ai_companion_summary_on] = false
     self[:ai_companion_summary_email_set] = nil
+    # Active shares run inside a meeting-like session, so their flags reset
+    # with it; the wireless sharing key / pairing instructions belong to the
+    # room and survive meeting end (cleared only by reset_room_state).
+    self[:hdmi_sharing] = false
+    self[:airplay_client_connected] = false
   end
 
   private def reset_room_state : Nil
@@ -1115,6 +1136,8 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     self[:meeting_error] = nil
     self[:meeting_ended] = nil
     self[:meeting_password_lock_status] = nil
+    self[:sharing_status] = nil
+    self[:sharing_key] = nil
     self[:paired] = false
     self[:online] = false
     self[:room_status] = nil

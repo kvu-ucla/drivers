@@ -104,6 +104,24 @@ module Zoom::ZRC
         true
       end
     end
+
+    # OnUpdateAirPlayBlackMagicStatus extraction lives here (below the event
+    # dispatcher's rescue) so specs can prove it never raises on missing, null
+    # or wrong-type input rather than the raise being swallowed into a
+    # "bad event payload" log line.
+    def sharing_payload(event : JSON::Any) : Hash(String, JSON::Any)?
+      event.as_h?.try(&.["status"]?).try(&.as_h?)
+    end
+
+    # Derived sharing signals: {hdmi_sharing, sharing_key, airplay_client_connected}.
+    # Nil means "absent or wrong type" so the caller preserves prior state.
+    def sharing_signals(sharing : Hash(String, JSON::Any)) : {Bool?, String?, Bool?}
+      {
+        sharing["isSharingBlackMagic"]?.try(&.as_bool?),
+        sharing["directPresentationSharingKey"]?.try(&.as_s?),
+        sharing["isAirHostClientConnected"]?.try(&.as_bool?),
+      }
+    end
   end
 
   struct JoinMeetingRequest

@@ -1671,6 +1671,112 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     wait_for_zrc_status { status[:speaker_volume]? == 171.0 }
   end
 
+  # Runs in the spec process, below handle_event's rescue: a raising
+  # regression in sharing extraction fails this example directly instead of
+  # becoming a swallowed "bad event payload" log line. (NOTE: top-level
+  # `describe` blocks register but NEVER execute under the DriverSpecs
+  # harness — runner.cr requires spec/dsl+methods without the Spec runner —
+  # so this must live inside mock_driver to actually run.)
+  it "extracts sharing status defensively from any payload shape" do
+    full = JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus","status":{"isSharingBlackMagic":true,"directPresentationSharingKey":"ABC123","isAirHostClientConnected":false}}))
+    sharing = Zoom::ZRC::EventState.sharing_payload(full).not_nil!
+    Zoom::ZRC::EventState.sharing_signals(sharing).should eq({true, "ABC123", false})
+
+    Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus"}))).should be_nil
+    Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":null}))).should be_nil
+    Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":"not-an-object"}))).should be_nil
+    Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":[1,2]}))).should be_nil
+    Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":7}))).should be_nil
+    Zoom::ZRC::EventState.sharing_payload(JSON.parse(%("bare-string"))).should be_nil
+
+    sparse = Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":{"serverName":"lab"}}))).not_nil!
+    Zoom::ZRC::EventState.sharing_signals(sparse).should eq({nil, nil, nil})
+
+    wrong_types = Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":{"isSharingBlackMagic":"yes","directPresentationSharingKey":42,"isAirHostClientConnected":0}}))).not_nil!
+    Zoom::ZRC::EventState.sharing_signals(wrong_types).should eq({nil, nil, nil})
+
+    null_fields = Zoom::ZRC::EventState.sharing_payload(JSON.parse(%({"status":{"isSharingBlackMagic":null,"directPresentationSharingKey":null,"isAirHostClientConnected":null}}))).not_nil!
+    Zoom::ZRC::EventState.sharing_signals(null_fields).should eq({nil, nil, nil})
+  end
+
+  it "ingests AirPlay/BlackMagic sharing status with session-scoped share flags" do
+    # Every field the binding exposes (zrc_bindings.cpp AirplayBlackMagicStatus)
+    # plus an unknown sentinel: the equality assertion fails if the handler
+    # reconstructs a known-field subset instead of passing the payload through.
+    full = JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus","status":{"instructionDisplayState":"AirPlayInstructionOptionNone","wifiName":"Zoom-Guest","serverName":"lab-test","password":"","directPresentationPairingCode":"1234567890","directPresentationSharingKey":"ABC123","isAirHostClientConnected":true,"isBlackMagicConnected":true,"isBlackMagicDataAvailable":true,"isSharingBlackMagic":true,"isDirectPresentationConnected":false,"isBlackMagicSharingLocallyAvailable":true,"isBlackMagicSharingLocally":false,"futureUnknownField":"passthrough-sentinel"}}))
+    event_server.send_event(full)
+    wait_for_zrc_status { status[:sharing_status]? == full["status"] }
+    status[:hdmi_sharing].should eq(true)
+    status[:sharing_key].should eq("ABC123")
+    status[:airplay_client_connected].should eq(true)
+
+    # a sparse update must not raise or clobber the derived keys it omits;
+    # sharing_status is assigned last in the handler, so a raise mid
+    # extraction leaves it stale and this wait times out red
+    sparse = JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus","status":{"serverName":"lab-test"}}))
+    event_server.send_event(sparse)
+    wait_for_zrc_status { status[:sharing_status]? == sparse["status"] }
+    status[:hdmi_sharing].should eq(true)
+    status[:sharing_key].should eq("ABC123")
+    status[:airplay_client_connected].should eq(true)
+
+    # wrong-TYPE fields: the payload still passes through (observable, so a
+    # raising regression fails the wait) while the derived keys hold
+    wrong_types = JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus","status":{"isSharingBlackMagic":"yes","directPresentationSharingKey":42,"isAirHostClientConnected":0}}))
+    event_server.send_event(wrong_types)
+    wait_for_zrc_status { status[:sharing_status]? == wrong_types["status"] }
+    status[:hdmi_sharing].should eq(true)
+    status[:sharing_key].should eq("ABC123")
+    status[:airplay_client_connected].should eq(true)
+
+    # payload-less / null / non-hash status events are ignored: the marker
+    # event after them proves the stream survived and nothing was overwritten
+    # (the EventState unit spec pins that these shapes cannot raise at all)
+    event_server.send_event(full)
+    wait_for_zrc_status { status[:sharing_status]? == full["status"] }
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus"})))
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus","status":null})))
+    event_server.send_event(JSON.parse(%({"event":"OnUpdateAirPlayBlackMagicStatus","status":"not-an-object"})))
+    event_server.send_event(JSON.parse(%({"event":"OnCurrentSpeakerVolumeChanged","volume":42.0})))
+    wait_for_zrc_status { status[:speaker_volume]? == 42.0 }
+    status[:sharing_status].should eq(full["status"])
+    status[:hdmi_sharing].should eq(true)
+    status[:sharing_key].should eq("ABC123")
+    status[:airplay_client_connected].should eq(true)
+
+    # session end clears the active-share flags but the room-scoped wireless
+    # key and last full payload survive outside the meeting
+    ended = exec(:get_meeting_status)
+    expect_http_request do |request, response|
+      request.method.should eq("GET")
+      request.path.should eq("/api/rooms/room-1/meeting/status")
+      response.status_code = 200
+      response << %({"status":"MeetingStatus.MeetingStatusNotInMeeting","result":0,"success":true})
+    end
+    ended.get
+    status[:hdmi_sharing].should eq(false)
+    status[:airplay_client_connected].should eq(false)
+    status[:sharing_key].should eq("ABC123")
+    status[:sharing_status].should eq(full["status"])
+
+    # a driver reload (settings -> on_update -> reset_room_state) is the one
+    # path that clears the room-scoped keys; dropping those resets from
+    # reset_room_state must turn this red
+    event_server.send_event(full)
+    wait_for_zrc_status { status[:hdmi_sharing]? == true && status[:airplay_client_connected]? == true }
+    settings({
+      room_id:          "room-1",
+      activation_code:  "SET-CODE",
+      running_specs:    true,
+      event_stream_uri: "http://127.0.0.1:#{event_server.port}",
+      basic_auth:       {username: "spec", password: "spec"},
+    })
+    wait_for_zrc_status do
+      status[:sharing_status]?.nil? && status[:sharing_key]?.nil? &&
+        status[:hdmi_sharing]? == false && status[:airplay_client_connected]? == false
+    end
+  end
+
   it "should exit a meeting and reconcile meeting state from the device" do
     status[:consent_prompt] = JSON.parse(%({"event":"OnConsentNotification"}))
     room_notification = JSON.parse(%({"event":"OnMeetingWillReleaseAutomatically","meetingItem":{"meetingNumber":"123"}}))
