@@ -818,6 +818,31 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     JSON::Any.new(merged)
   end
 
+  # Waiting-room admission. The wrapper's `result`/`success` are a synchronous
+  # SDK command ack (0 = accepted), not completion, so no participant status is
+  # written here: the roster events fired by the actual move trigger the
+  # coalesced get_participants refetch, which carries the real
+  # is_in_waiting_room values. `user_ids` are the SDK userID integers from the
+  # participants list.
+
+  def admit_from_waiting_room(user_ids : Array(Int32)) : JSON::Any
+    body = {user_ids: user_ids}.to_json
+    response = post("/api/rooms/#{@room_id}/participants/waiting-room/admit", body: body, headers: JSON_HEADERS)
+    parse_command_response(response, "admit from waiting room")
+  end
+
+  def admit_all_from_waiting_room : JSON::Any
+    response = post("/api/rooms/#{@room_id}/participants/waiting-room/admit-all", headers: JSON_HEADERS)
+    parse_command_response(response, "admit all from waiting room")
+  end
+
+  # Put in-meeting participants back on hold (the SDK's PutUsersIntoWaitingRoom).
+  def send_to_waiting_room(user_ids : Array(Int32)) : JSON::Any
+    body = {user_ids: user_ids}.to_json
+    response = post("/api/rooms/#{@room_id}/participants/waiting-room/hold", body: body, headers: JSON_HEADERS)
+    parse_command_response(response, "send to waiting room")
+  end
+
   # =========================================================
   # Utility
   # =========================================================

@@ -1078,6 +1078,103 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
   end
 
+  it "should admit waiting-room users, returning the ack without touching status" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16782336,"user_name":"Kenneth","is_in_waiting_room":true}],"count":1}))
+    status[:participants] = roster_before
+    result = exec(:admit_from_waiting_room, [16782336, 16794624])
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/participants/waiting-room/admit")
+      request.headers["Content-Type"]?.should eq("application/json")
+      body = JSON.parse(request.body.not_nil!)
+      body.should eq(JSON.parse(%({"user_ids":[16782336,16794624]})))
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[16782336,16794624],"count":2,"result":0,"success":true})
+    end
+
+    # result 0 is only the SDK's command ack: the actual move surfaces via
+    # roster events -> get_participants refetch, so nothing is fabricated here
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_ids":[16782336,16794624],"count":2,"result":0,"success":true})))
+    status[:participants].should eq(roster_before)
+  end
+
+  it "should admit all waiting-room users without a request body" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16794624,"user_name":"Waiting","is_in_waiting_room":true}],"count":1}))
+    status[:participants] = roster_before
+    result = exec(:admit_all_from_waiting_room)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/participants/waiting-room/admit-all")
+      request.body.try(&.gets_to_end).presence.should be_nil
+      response.status_code = 200
+      response << %({"room_id":"room-1","result":0,"success":true})
+    end
+
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","result":0,"success":true})))
+    status[:participants].should eq(roster_before)
+  end
+
+  it "should send users back to the waiting room via the hold route" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16786432,"user_name":"NoField","is_in_waiting_room":false}],"count":1}))
+    status[:participants] = roster_before
+    result = exec(:send_to_waiting_room, [16786432, 16790528])
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/participants/waiting-room/hold")
+      request.headers["Content-Type"]?.should eq("application/json")
+      body = JSON.parse(request.body.not_nil!)
+      body.should eq(JSON.parse(%({"user_ids":[16786432,16790528]})))
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[16786432,16790528],"count":2,"result":0,"success":true})
+    end
+
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_ids":[16786432,16790528],"count":2,"result":0,"success":true})))
+    status[:participants].should eq(roster_before)
+  end
+
+  it "rejects failed waiting-room admission acks returned with HTTP 200" do
+    # the wrapper reports SDK refusal as 200 + nonzero result/success:false;
+    # each verb must raise through the shared failure path, never ack quietly
+    result = exec(:admit_from_waiting_room, [16782336])
+
+    expect_http_request do |request, response|
+      request.path.should eq("/api/rooms/room-1/participants/waiting-room/admit")
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[16782336],"count":1,"result":7,"success":false})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /admit from waiting room failed/) do
+      result.get
+    end
+
+    result = exec(:admit_all_from_waiting_room)
+
+    expect_http_request do |request, response|
+      request.path.should eq("/api/rooms/room-1/participants/waiting-room/admit-all")
+      response.status_code = 200
+      response << %({"room_id":"room-1","result":7,"success":false})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /admit all from waiting room failed/) do
+      result.get
+    end
+
+    result = exec(:send_to_waiting_room, [16782336])
+
+    expect_http_request do |request, response|
+      request.path.should eq("/api/rooms/room-1/participants/waiting-room/hold")
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[16782336],"count":1,"result":7,"success":false})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /send to waiting room failed/) do
+      result.get
+    end
+  end
+
   it "passes a non-hash participants payload through unchanged" do
     result = exec(:get_participants)
 
