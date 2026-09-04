@@ -1135,6 +1135,62 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     status[:participants].should eq(roster_before)
   end
 
+  it "should deny waiting-room users via expel-multiple, returning the ack without touching status" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16782336,"user_name":"Kenneth","is_in_waiting_room":true}],"count":1}))
+    status[:participants] = roster_before
+    result = exec(:deny_from_waiting_room, [16782336, 16794624])
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/participants/expel-multiple")
+      request.headers["Content-Type"]?.should eq("application/json")
+      request.headers["Accept"]?.should eq("application/json")
+      body = JSON.parse(request.body.not_nil!)
+      body.should eq(JSON.parse(%({"user_ids":[16782336,16794624]})))
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[16782336,16794624],"count":2,"result":0,"success":true})
+    end
+
+    # result 0 is only the SDK's command ack: the actual removal surfaces via
+    # roster events -> get_participants refetch, so nothing is fabricated here
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_ids":[16782336,16794624],"count":2,"result":0,"success":true})))
+    status[:participants].should eq(roster_before)
+  end
+
+  it "should reject a failed deny ack without touching status" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16782336,"user_name":"Kenneth","is_in_waiting_room":true}],"count":1}))
+    status[:participants] = roster_before
+    result = exec(:deny_from_waiting_room, [16782336])
+
+    expect_http_request do |request, response|
+      request.path.should eq("/api/rooms/room-1/participants/expel-multiple")
+      response.status_code = 200
+      response << %({"room_id":"room-1","result":11,"success":false})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /deny from waiting room failed/) do
+      result.get
+    end
+    status[:participants].should eq(roster_before)
+  end
+
+  it "should pass an empty deny list through to the wrapper unvalidated" do
+    # id validation is intentionally delegated to the wrapper (see driver
+    # comment): the driver forwards whatever it is given, including []
+    result = exec(:deny_from_waiting_room, [] of Int32)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/participants/expel-multiple")
+      body = JSON.parse(request.body.not_nil!)
+      body.should eq(JSON.parse(%({"user_ids":[]})))
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[],"count":0,"result":0,"success":true})
+    end
+
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_ids":[],"count":0,"result":0,"success":true})))
+  end
+
   it "rejects failed waiting-room admission acks returned with HTTP 200" do
     # the wrapper reports SDK refusal as 200 + nonzero result/success:false;
     # each verb must raise through the shared failure path, never ack quietly

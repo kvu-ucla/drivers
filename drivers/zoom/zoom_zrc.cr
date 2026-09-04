@@ -836,6 +836,18 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     parse_command_response(response, "admit all from waiting room")
   end
 
+  # Deny (remove) waiting-room users via the wrapper's expel-multiple route
+  # (the SDK's ExpelUsers — the SDK has no dedicated waiting-room deny; expel
+  # is what Zoom's own controller UI issues). Same ack-only contract as admit
+  # above. ID validation is intentionally delegated to the wrapper: expel acts
+  # on whatever ids it is given, so callers must only pass ids currently
+  # flagged is_in_waiting_room in the participants list.
+  def deny_from_waiting_room(user_ids : Array(Int32)) : JSON::Any
+    body = {user_ids: user_ids}.to_json
+    response = post("/api/rooms/#{@room_id}/participants/expel-multiple", body: body, headers: JSON_HEADERS)
+    parse_command_response(response, "deny from waiting room")
+  end
+
   # Put in-meeting participants back on hold (the SDK's PutUsersIntoWaitingRoom).
   def send_to_waiting_room(user_ids : Array(Int32)) : JSON::Any
     body = {user_ids: user_ids}.to_json
