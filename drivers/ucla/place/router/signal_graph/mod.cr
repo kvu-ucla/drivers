@@ -50,7 +50,11 @@ class Place::Router::SignalGraph
     end
 
     def self.parse?(ref)
-      if m = ref.match /^(.+)\/(.+)\_(\d+)$/
+      # The module-name group must not span ':' or '/': a greedy `.+` here
+      # swallowed input-qualified refs like "sys-x/Switcher_1:Zoom_Output_1"
+      # as module "Switcher_1:Zoom_Output", making Mod#initialize raise before
+      # DeviceInput/DeviceOutput could try their (correct) interpretations.
+      if m = ref.match /^(.+)\/([^:\/]+)\_(\d+)$/
         sys = m[1]
         mod = m[2]
         idx = m[3].to_i
