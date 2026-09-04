@@ -343,7 +343,11 @@ class Place::Meet < PlaceOS::Driver
     update_available_tabs
     update_available_help
     update_available_outputs
+    # bindable fact for on-glass health: a failed graph load was previously
+    # only a log line, invisible to every UI
+    self[:signal_graph_ok] = true
   rescue error
+    self[:signal_graph_ok] = false
     logger.warn(exception: error) { "failed to init signal graph" }
   end
 
