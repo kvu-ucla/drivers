@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/sony/camera/cgi_protocol.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
-# Version 2.0.0 — documentation: cgi_protocol_readme.md
+# Version 2.0.1 — documentation: cgi_protocol_readme.md
 require "placeos-driver"
 require "placeos-driver/interface/camera"
 require "placeos-driver/interface/device_info"
@@ -161,7 +161,10 @@ class Sony::Camera::CGI < PlaceOS::Driver
       raise "unexpected response #{response.status_code}\n#{response.body}" unless response.success?
 
       result = block.call(parse_inquiry(data))
-      task.success result
+      # the explicit cast is load-bearing: without it Crystal 1.19.1 codegen
+      # crashes (Cast from Nil to ProcInstanceType) in the HTTP-only build.
+      # New call-site blocks returning other types must extend this union.
+      task.success result.as(Hash(String, String) | Bool | Nil)
     end
   end
 
@@ -303,8 +306,11 @@ class Sony::Camera::CGI < PlaceOS::Driver
       response = get_with_digest_auth(path)
       raise "request error #{response.status_code}\n#{response.body}" unless response.success?
 
-      result = block.call(response)
-      task.success result
+      # block result deliberately discarded: forwarding it fed incidental
+      # values (last-expression garbage, whole Tasks) into the payload and
+      # helped trip a Crystal 1.19.1 codegen crash in the HTTP-only build
+      block.call(response)
+      task.success nil
     end
   end
 

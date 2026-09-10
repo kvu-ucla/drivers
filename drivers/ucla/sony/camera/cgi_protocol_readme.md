@@ -1,6 +1,6 @@
 # Sony Camera HTTP CGI Protocol (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/sony/camera/cgi_protocol.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18).
 
@@ -51,6 +51,10 @@ Controls Sony PTZ cameras over the HTTP CGI command protocol with digest authent
 | `cam_preset_save(preset_no)` / `cam_preset_recall(preset_no)` | Camera-side presets. |
 | `autoframe(state)` / `autoframing?` | PTZ autoframing control/query. |
 | `power(state)` / `power?` | On/standby control and query. |
+
+## 2.0.1 (2026-09-10)
+
+- Fixes a Crystal 1.19.1 codegen crash (`Cast from Nil to ProcInstanceType`) that broke compilation in HTTP-only builds (the PlaceOS build service configuration). Two changes: the `action` command helper no longer forwards its block's incidental result as the task payload (command exec results now resolve with null payloads — previously undefined garbage), and the `query` helper casts its forwarded block result to an explicit union (`Hash(String, String) | Bool | Nil`) — payloads unchanged, the cast alone defeats the compiler bug. The upstream driver carries the same defect.
 
 ## 2.0.0 (2026-08-31)
 
