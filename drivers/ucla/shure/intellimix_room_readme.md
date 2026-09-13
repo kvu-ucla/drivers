@@ -1,6 +1,6 @@
 # Shure IntelliMix Room Audio Processor (UCLA)
 
-**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.2 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/shure/intellimix_room.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18).
 
@@ -25,24 +25,30 @@ Status keys are derived from `< REP … >` responses:
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `query_device_identity` | One-shot `GET MODEL` / `GET FW_VER` / `GET DEVICE_ID` (also run on connect). |
-| `get_all` | Full state dump (`GET ALL`). |
-| `device_info` | Descriptor from cached status: make `Shure`, model with `IntelliMix Room` fallback, serial (`serial_num`), firmware (`fw_ver`), configured IP. |
-| `get_preset` / `set_preset(number)` | Preset recall (numbers zero-padded to 2 digits on the wire). |
-| `get_device_audio_mute` / `set_device_audio_mute(mute)` | Device-wide audio mute. |
-| `get_audio_mute(index)` / `set_audio_mute(index, mute)` | Per-channel mute. |
-| `get_audio_gain_hi_res(index)` / `set_audio_gain_hi_res(index, value)` | Per-channel high-resolution gain. |
-| `get_audio_gain_postgate(index)` / `set_audio_gain_postgate(index, gain)` | Post-gate gain. |
-| `get_automxr_mute(index)` / `set_automxr_mute(index, mute)` / `get_automxr_gate(index)` | Automixer controls. |
-| `get_matrix_mxr_route(input, output)` / `set_matrix_mxr_route(input, output, enabled)` | Matrix routing. |
-| `get_matrix_mxr_gain(input, output)` / `set_matrix_mxr_gain(input, output, gain)` | Matrix gain. |
-| `get_denoiser_enable(index)` / `set_denoiser_enable(index, enable)` / `get_denoiser_level(index)` / `set_denoiser_level(index, level)` | Denoiser (level `LOW`/`MEDIUM`/`HIGH`). |
-| `get_onhook_enable` / `set_onhook_enable(enable)` | On-hook behaviour. |
-| `get_na_device_name` / `get_chan_config` / `get_chan_count` | Device/channel queries. |
-| `get_lic_exp_date` / `get_lic_type` / `get_lic_valid` | Licensing queries. |
-| `mute(state, index, layer)` | Muteable interface — maps audio layers to `set_device_audio_mute`. |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `query_device_identity` | — | One-shot `GET MODEL` / `GET FW_VER` / `GET DEVICE_ID` (also run on connect). |
+| `get_all` | — | Full state dump (`GET ALL`). |
+| `device_info` | — | Descriptor from cached status: make `Shure`, model with `IntelliMix Room` fallback, serial (`serial_num`), firmware (`fw_ver`), configured IP. |
+| `get_preset` / `set_preset` | `number : Int32` — preset number (zero-padded to 2 digits on the wire) | Preset recall. |
+| `get_device_audio_mute` / `set_device_audio_mute` | `mute : Bool` — `true` mutes / `false` unmutes | Device-wide audio mute. |
+| `get_audio_mute` / `set_audio_mute` | `index : Int32` — channel (zero-padded to 2 digits); `mute : Bool` | Per-channel mute. |
+| `get_audio_gain_hi_res` / `set_audio_gain_hi_res` | `index : Int32` — channel; `value : Int32` — gain value (no driver-side range check) | Per-channel high-resolution gain. |
+| `get_audio_gain_postgate` / `set_audio_gain_postgate` | `index : Int32`; `gain : Int32` | Post-gate gain. |
+| `get_automxr_mute` / `set_automxr_mute` | `index : Int32`; `mute : Bool` | Automixer per-channel mute. |
+| `get_automxr_gate` | `index : Int32` | Automixer gate state. |
+| `get_matrix_mxr_route` / `set_matrix_mxr_route` | `input : Int32`; `output : Int32`; `enabled : Bool` | Matrix routing. |
+| `get_matrix_mxr_gain` / `set_matrix_mxr_gain` | `input : Int32`; `output : Int32`; `gain : Int32` | Matrix gain. |
+| `get_denoiser_enable` / `set_denoiser_enable` | `index : Int32`; `enable : Bool` | Denoiser on/off. |
+| `get_denoiser_level` / `set_denoiser_level` | `index : Int32`; `level : String` — `"LOW"`, `"MEDIUM"`, or `"HIGH"` | Denoiser strength. |
+| `get_onhook_enable` / `set_onhook_enable` | `enable : Bool` | On-hook behaviour. |
+| `get_na_device_name` / `get_chan_config` / `get_chan_count` | — | Device/channel queries. |
+| `get_lic_exp_date` / `get_lic_type` / `get_lic_valid` | — | Licensing queries. |
+| `mute` | `state : Bool = true`; `index : Int32 \| String = 0` (unused); `layer : MuteLayer = AudioVideo` — audio/audio-video layers map to `set_device_audio_mute`; video is ignored | Muteable interface. |
+
+## 2.0.2 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.0.1 (2026-09-01)
 

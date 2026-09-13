@@ -1,6 +1,6 @@
 # Sony Bravia LCD Display (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/sony/displays/bravia.cr` (vendored 2026-08-30 from ucla-dev fork @ ca4750ac07). Based on the production pin — the commit production actually runs; repo HEAD had drifted 9 unvetted upstream commits ahead of it.
 
@@ -28,16 +28,28 @@ None — the driver reads no settings. Connection details come from the module's
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `power(state)` / `power?` | Power control and query. |
-| `switch_to(input)` / `input?` | Input selection and query. |
-| `mute(state, index, layer)` / `unmute` / `mute?` | Picture mute. |
-| `mute_audio(state)` / `unmute_audio` / `audio_mute?` | Audio mute. |
-| `volume(level)` / `volume?` / `volume_up` / `volume_down` | Volume (clamped 0–100; up/down step by 5). |
-| `mac_address?` | `MADR` enquiry — the interface name `eth0` right-padded with `#` to 16 bytes, as the protocol requires. |
-| `do_poll` | Polls input/mute/audio-mute/volume when the display is on. |
-| `device_info` | Pure cache read of the descriptor (no protocol traffic). |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `power` | `state : Bool` — `true` on / `false` off | Power control. |
+| `power?` | — | Queries power state. |
+| `switch_to` | `input : String` — `Tv0`–`Tv3`, `Hdmi0`–`Hdmi3`, `Mirror0`–`Mirror3`, `Vga0`–`Vga3` | Input selection. |
+| `input?` | — | Queries current input. |
+| `mute` | `state : Bool = true`; `index : Int32 \| String = 0` (unused); `layer : MuteLayer = AudioVideo` (unused) | Picture mute. |
+| `unmute` | — | Unmutes picture (calls `mute(false)`). |
+| `mute?` | — | Queries picture mute. |
+| `mute_audio` | `state : Bool = true` | Audio mute. |
+| `unmute_audio` | — | Unmutes audio (calls `mute_audio(false)`). |
+| `audio_mute?` | — | Queries audio mute. |
+| `volume` | `level : Int32 \| Float64` — clamped 0–100 | Set volume. |
+| `volume?` | — | Queries volume. |
+| `volume_up` / `volume_down` | — | Volume up/down (step by 5). |
+| `mac_address?` | — | `MADR` enquiry — the interface name `eth0` right-padded with `#` to 16 bytes, as the protocol requires. |
+| `do_poll` | — | Polls input/mute/audio-mute/volume when the display is on. |
+| `device_info` | — | Pure cache read of the descriptor (no protocol traffic). |
+
+## 2.0.1 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.0.0 (2026-08-31)
 

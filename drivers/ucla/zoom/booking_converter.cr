@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/zoom/booking_converter.cr (vendored 2026-09-04 from ucla-dev @ b479ebe0a5)
-# Version 1.0.0 — documentation: booking_converter_readme.md
+# Version 1.0.1 — documentation: booking_converter_readme.md
 require "placeos-driver"
 require "place_calendar"
 

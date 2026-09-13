@@ -1,6 +1,6 @@
 # Zoom Booking Converter (UCLA)
 
-**Version:** 1.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 1.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/zoom/booking_converter.cr` (vendored 2026-09-04 from ucla-dev @ b479ebe0a5), repointed from the retired ZoomCSAPI module to the Zoom ZRC module's `meetings` status.
 
@@ -40,6 +40,14 @@ UCLA ZRC room calendars contain **only Zoom meetings**. An entry without a top-l
 | `current_booking` | The event covering now, else absent. The driver assigns `nil`, which PlaceOS status storage implements as key deletion: readers find the key missing (`[]?` → nil, `[]` raises), while subscribers receive a `null` notification. |
 | `booking_in_progress` | Bool. |
 | `next_booking` | The first event starting after now, else absent (same nil-delete semantics as `current_booking`). |
+
+## Exec methods
+
+None — the driver is configuration/subscription-driven: it reacts to the configured `booking_source` status and the per-minute cron; there are no exec-callable methods.
+
+## 1.0.1 (2026-09-08)
+
+- Documentation: added an explicit Exec methods note (the driver exposes no exec-callable methods). No code change.
 
 ## Known limitations
 

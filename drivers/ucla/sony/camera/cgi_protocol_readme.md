@@ -1,6 +1,6 @@
 # Sony Camera HTTP CGI Protocol (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/sony/camera/cgi_protocol.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18).
 
@@ -36,21 +36,32 @@ Controls Sony PTZ cameras over the HTTP CGI command protocol with digest authent
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `query_status(priority)` | PTZF inquiry (also polls autoframing and power); returns the PTZF task so `exec(...).get` resolves with PTZ state. |
-| `info?` | Manual `inq=system` identity inquiry (publishes the legacy identity keys). |
-| `device_info` | Descriptor from a direct system inquiry: make `Sony`, `ModelName` with `Camera` fallback, serial, firmware (`SoftVersion`), MAC, configured host. Also republishes the legacy identity keys. |
-| `move(position, index)` / `move_all(position, index)` | Directional movement (4-way interface / 8-way + Tele/Wide). |
-| `joystick(pan_speed, tilt_speed, index)` | Proportional movement, speeds −100..100. |
-| `stop(index, emergency)` / `stop_zoom` | Stop motion / stop zoom. |
-| `pantilt(pan, tilt, zoom, focus)` | Absolute positioning (values clamped to reported ranges). |
-| `zoom(direction, index)` / `zoom_to(position, auto_focus, index)` | Relative / absolute (0–100 %) zoom. |
-| `home` | Recalls the camera home position. |
-| `recall(position, index)` / `save_position(name, index)` / `remove_position(name, index)` | Driver-side presets (persisted to settings). |
-| `cam_preset_save(preset_no)` / `cam_preset_recall(preset_no)` | Camera-side presets. |
-| `autoframe(state)` / `autoframing?` | PTZ autoframing control/query. |
-| `power(state)` / `power?` | On/standby control and query. |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `query_status` | `priority : Int32 = 0` | PTZF inquiry (also polls autoframing and power); returns the PTZF task so `exec(...).get` resolves with PTZ state. |
+| `info?` | — | Manual `inq=system` identity inquiry (publishes the legacy identity keys). |
+| `device_info` | — | Descriptor from a direct system inquiry: make `Sony`, `ModelName` with `Camera` fallback, serial, firmware (`SoftVersion`), MAC, configured host. Also republishes the legacy identity keys. |
+| `move` | `position : String` — `Up`/`Down`/`Left`/`Right` (4-way), `In`/`Out` (zoom); `index : Int32 \| String = 0` — camera index, 1-based | Directional movement. |
+| `move_all` | `position : String` — `Up`, `Down`, `Left`, `Right`, `UpLeft`, `UpRight`, `DownLeft`, `DownRight`, `Tele`, `Wide`; `index : Int32 \| String = 0` | 8-way + Tele/Wide movement. |
+| `joystick` | `pan_speed : Float64` — −100…100; `tilt_speed : Float64` — −100…100; `index : Int32 \| String = 0` | Proportional movement; `0`/`0` stops. |
+| `stop` | `index : Int32 \| String = 0` — camera index; `emergency : Bool = false` — clears the queue | Stop motion. |
+| `stop_zoom` | — | Stop zoom. |
+| `pantilt` | `pan : Int32`; `tilt : Int32`; `zoom : Int32? = nil`; `focus : Int32? = nil` — values clamped to reported ranges | Absolute positioning. |
+| `zoom` | `direction : String` — `In`/`Out`/`Stop`; `index : Int32 \| String = 0` | Relative zoom. |
+| `zoom_to` | `position : Float64` — 0–100 %; `auto_focus : Bool = true`; `index : Int32 \| String = 0` | Absolute zoom (0–100 %). |
+| `home` | — | Recalls the camera home position. |
+| `recall` | `position : String` — preset name; `index : Int32 \| String = 0` | Recalls a driver-side preset. |
+| `save_position` | `name : String`; `index : Int32 \| String = 0` | Saves a driver-side preset (persisted to settings). |
+| `remove_position` | `name : String`; `index : Int32 \| String = 0` | Removes a driver-side preset. |
+| `cam_preset_save` / `cam_preset_recall` | `preset_no : Int32` | Camera-side presets. |
+| `autoframe` | `state : Bool` — `true` on / `false` off | PTZ autoframing control. |
+| `autoframing?` | — | Queries autoframing state. |
+| `power` | `state : Bool` — `true` on / `false` standby | On/standby control. |
+| `power?` | — | Queries power state. |
+
+## 2.0.1 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.0.0 (2026-08-31)
 

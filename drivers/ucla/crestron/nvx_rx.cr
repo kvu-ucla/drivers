@@ -1,5 +1,5 @@
 # UCLA-maintained copy of drivers/crestron/nvx_rx.cr (vendored 2026-08-30 from ucla-dev @ ce19af2a18)
-# Version 2.0.1 — documentation: nvx_rx_readme.md
+# Version 2.0.2 — documentation: nvx_rx_readme.md
 require "./cres_next"
 require "placeos-driver/interface/switchable"
 require "placeos-driver/interface/standby_image"

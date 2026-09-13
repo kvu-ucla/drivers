@@ -1,6 +1,6 @@
 # Crestron NVX Receiver (UCLA)
 
-**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.2 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/nvx_rx.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18). Built on the shared UCLA `cres_next.cr` / `cres_next_auth.cr` base.
 
@@ -35,23 +35,30 @@ Routing to a transmitter is done by writing the transmitter's advertised RTSP UR
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `switch_to(input)` | Name-based switch: `none`/`break`/`clear`/`blank`/`black` blank the output; `input1`/`hdmi`/`hdmi1`, `input2`/`hdmi2`, `input3`/`usbc1`, `input4`/`usbc2` select local inputs; inputs starting with `rtsp` route via `switch_stream_location`; anything else falls through to the dormant Xio path. |
-| `switch_stream_location(location)` | Routes a transmitter's advertised stream: rejects empty URIs, writes `[{StreamLocation: uri}]` to `/StreamReceive/Streams` over the websocket (raises loudly if the device rejects the write — non-zero StatusId ack or ack timeout), then sets `VideoSource = "Stream"` and audio per `audio_follows_video`. |
-| `switch(map, layer)` | Switchable-interface entry point (uses the first input in the map). |
-| `output(state)` | Enables/disables HDMI output sync. |
-| `output_with_index(state, output_index, port_index)` | Per-output/port variant of `output`. |
-| `aspect_ratio(mode)` | `MaintainAspectRatio` or `StretchToFit`. |
-| `set_osd_text(text, enabled)` / `query_osd_text` | OSD control. |
-| `enable_background_image(state, output_index)` | Enables the standby image (Support level). |
-| `set_background_image(url, output_index)` | Downloads the image and uploads it to the decoder's local image slot, then points the output at it (Administrator level). |
-| `set_background_image_name(image_name, output_index)` | Selects an already-uploaded local image (Administrator level). |
-| `device_info` | Fetches/serves the descriptor (shared base). |
-| `authenticate` / `logout` / `maintain_session` | Session management (shared auth module). |
-| `manual_send(payload)` | Raw websocket payload (Support level). |
-| `reboot(now)` | Reboots the device (Administrator level). |
-| `__stat_mem__` / `__stat_fiber__` | Driver memory / fiber diagnostics. |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `switch_to` | `input : String` — `none`/`break`/`clear`/`blank`/`black` blank the output; `input1`/`hdmi`/`hdmi1`, `input2`/`hdmi2`, `input3`/`usbc1`, `input4`/`usbc2` select local inputs; `rtsp…` routes via `switch_stream_location`; anything else falls through to the dormant Xio path | Name-based switch (all layers). |
+| `switch_stream_location` | `location : String` — the transmitter's advertised RTSP URI (blank rejected) | Routes a transmitter's stream: writes `[{StreamLocation: uri}]` to `/StreamReceive/Streams` over the websocket, raises loudly if the device rejects the write (non-zero `StatusId` ack or ack timeout), then sets `VideoSource = "Stream"` and audio per `audio_follows_video`. |
+| `switch` | `map : Hash(String, Array(Int32))` — input ⇒ output indices; `layer : "All"\|"Video"\|"Audio"? = nil` (defaults to All) | Switchable-interface entry point — uses the first input key in the map. |
+| `output` | `state : Bool` — `true` enables / `false` disables | HDMI output sync enable/disable. |
+| `output_with_index` | `state : Bool`; `output_index : Int32`; `port_index : Int32?` | Per-output/port variant of `output`. |
+| `aspect_ratio` | `mode : String` — `"MaintainAspectRatio"` or `"StretchToFit"` | Sets the output aspect-ratio mode. |
+| `set_osd_text` | `text : String`; `enabled : Bool = true` | Sets on-screen-display text. |
+| `query_osd_text` | — | Queries the current OSD text (publishes `osd_text`). |
+| `enable_background_image` | `state : Bool = true`; `output_index : Int32? = nil` | Enables the standby image (Support level). |
+| `set_background_image` | `url : String`; `output_index : Int32? = nil` | Downloads the image and uploads it to the decoder's local image slot, then points the output at it (Administrator level). |
+| `set_background_image_name` | `image_name : String`; `output_index : Int32? = nil` | Selects an already-uploaded local image (Administrator level). |
+| `device_info` | — | Fetches/serves the `Descriptor` (shared base; infallible cached fallback). |
+| `authenticate` | `lifecycle : Bool = true` — `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
+| `logout` | — | Ends the session and disconnects. Returns `Bool` (success). |
+| `maintain_session` | — | Failure-isolated login refresh (also on a 10-minute schedule). |
+| `manual_send` | `payload : JSON::Any` — any JSON value (`String`/`Number`/`Bool`/`Object`/`Array`) | Sends a raw websocket payload (Support level). |
+| `reboot` | `now : Bool = false` — `false` sleeps a random 0–5 s first | Reboots the device (Administrator level). |
+| `__stat_mem__` / `__stat_fiber__` | — | Driver memory / fiber diagnostics. |
+
+## 2.0.2 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.0.1 (2026-09-01)
 

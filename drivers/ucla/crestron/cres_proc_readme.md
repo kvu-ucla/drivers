@@ -1,6 +1,6 @@
 # Crestron - SIMPL Interface (UCLA)
 
-**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.2 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/cres_proc.cr` (vendored 2026-08-30 from ucla-drivers @ 4de617d9c7). Based on the production pin — the commit production actually runs — rather than repo HEAD.
 
@@ -21,12 +21,16 @@ The driver has no settings. No credentials are required.
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `query` | Sends `query\r\n` to the bridge; the response updates `state`. |
-| `do_poll` | Alias for `query` (used by the 50-second poll). |
-| `state` | Returns the cached boolean state (nil until first response). |
-| `device_info` | Returns the static descriptor described above. |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `query` | — | Sends `query\r\n` to the bridge; the response updates `state`. |
+| `do_poll` | — | Alias for `query` (used by the 50-second poll). |
+| `state` | — | Returns the cached `state : Bool?` (`nil` until first response). |
+| `device_info` | — | Returns the static `Descriptor` described above. |
+
+## 2.0.2 (2026-09-08)
+
+- Documentation: Exec methods table now states argument and return types (no code change).
 
 ## 2.0.1 (2026-09-01)
 

@@ -1,6 +1,6 @@
 # Crestron Virtual Switcher (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/virtual_switcher.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18), rewritten for StreamLocation routing per `docs/superpowers/specs/2026-08-31-nvx-streamlocation-routing-design.md`.
 
@@ -32,13 +32,17 @@ Intent/actual divergence logs a warning (only for outputs that have a recorded i
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `switch_to(input)` | Routes the input to **all** configured outputs. |
-| `switch(map, layer)` | Routes `{input => [outputs]}` per layer (All/Video/Audio). Blank inputs: `none`, `break`, `clear`, `blank`, `black`, `0`. |
-| `mute(state, index, layer)` | Mute-only (no unmute): blanks the given output on the mapped layer. |
-| `available_inputs` / `available_outputs` | Configured friendly names. |
-| `power(state)` | No-op stub to suppress errors in routing logic. |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `switch_to` | `input : String` — friendly input name; blank values `none`/`break`/`clear`/`blank`/`black`/`0` blank | Routes the input to **all** configured outputs. |
+| `switch` | `map : Hash(String, Array(Int32 \| String))` — input ⇒ outputs; `layer : "All"\|"Video"\|"Audio"? = nil` (defaults to All) | Routes `{input => [outputs]}` per layer. Blank inputs: `none`, `break`, `clear`, `blank`, `black`, `0`. |
+| `mute` | `state : Bool = true` — only `true` supported (mute-only); `index : Int32 \| String = 0` — output name or legacy `Decoder_<n>` index; `layer : "Audio"\|"Video"\|"AudioVideo" = AudioVideo` | Blanks the given output on the mapped layer (no unmute). |
+| `available_inputs` / `available_outputs` | — | Configured friendly names. |
+| `power` | `state : Bool` | No-op stub to suppress errors in routing logic. |
+
+## 2.0.1 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.0.0 (2026-08-31)
 
