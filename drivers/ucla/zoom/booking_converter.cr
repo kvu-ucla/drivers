@@ -43,6 +43,7 @@ class Zoom::BookingConverter < PlaceOS::Driver
     getter end_time : String?
     getter is_private : Bool?
     getter is_all_day_event : Bool?
+    getter is_instant_meeting : Bool?
 
     def number : String?
       meeting_number.try &.presence
@@ -66,6 +67,10 @@ class Zoom::BookingConverter < PlaceOS::Driver
 
     def all_day? : Bool
       is_all_day_event || false
+    end
+
+    def instant? : Bool
+      is_instant_meeting || false
     end
 
     private def parse_time(value : String?) : Time?
@@ -130,6 +135,14 @@ class Zoom::BookingConverter < PlaceOS::Driver
         ZRCMeeting.from_json(normalize_entry(entry))
       rescue error : JSON::SerializableError
         logger.warn { "skipping unparsable meetings entry: #{entry.inspect} (#{error.message})" }
+        next
+      end
+
+      # A *started* instant meeting appears in the list with real times, so
+      # the blank-times skip below doesn't catch it; instant meetings are
+      # never calendar bookings regardless of their times.
+      if meeting.instant?
+        logger.debug { "skipping instant meeting entry: #{meeting.name}" }
         next
       end
 

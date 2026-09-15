@@ -25,7 +25,7 @@ The converter underscore-normalizes every entry's keys before parsing, so both s
 
 ## Skip policy (by design)
 
-UCLA ZRC room calendars contain **only Zoom meetings**. An entry without a top-level meeting number is skipped by design — third-party (Teams/Webex) events and plain calendar holds are never scheduled on these calendars, so `third_party_meeting_info` is intentionally ignored. Entries with blank/unparseable times are also skipped (this covers instant meetings, which are not calendar bookings). Each skip logs a warning.
+UCLA ZRC room calendars contain **only Zoom meetings**. An entry without a top-level meeting number is skipped by design — third-party (Teams/Webex) events and plain calendar holds are never scheduled on these calendars, so `third_party_meeting_info` is intentionally ignored. Entries flagged `is_instant_meeting` are skipped regardless of their times — a *started* instant meeting carries real start/end times but is never a calendar booking. Entries with blank/unparseable times are also skipped. Each skip logs.
 
 ## Failure posture
 

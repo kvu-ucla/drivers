@@ -19,8 +19,9 @@ DriverSpecs.mock_driver "Zoom::BookingConverter" do
   # REST /meetings/list shape: snake_case keys as serialized by the wrapper's
   # meeting_item_to_dict (service/controllers/meeting_list.py). Listed with the
   # future meeting first to prove bookings are sorted by start time. The last
-  # two entries are malformed (missing meeting_number / blank instant-meeting
-  # times) and must be skipped without dropping the valid ones.
+  # three entries must be skipped without dropping the valid ones: missing
+  # meeting_number, blank instant-meeting times, and a *started* instant
+  # meeting that carries real times but is never a calendar booking.
   rest_meetings = %([
     {
       "zoom_meeting_item_type": 1,
@@ -64,6 +65,14 @@ DriverSpecs.mock_driver "Zoom::BookingConverter" do
       "meeting_name": "Instant Meeting",
       "start_time": "",
       "end_time": "",
+      "is_instant_meeting": true
+    },
+    {
+      "zoom_meeting_item_type": 1,
+      "meeting_number": "444555666",
+      "meeting_name": "Started Instant Meeting",
+      "start_time": "#{current_start.to_rfc3339}",
+      "end_time": "#{current_end.to_rfc3339}",
       "is_instant_meeting": true
     }
   ])
