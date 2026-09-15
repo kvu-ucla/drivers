@@ -1232,6 +1232,8 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
   end
 
   it "mutes a participant's audio via the wrapper's mute-user route" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16782336,"user_name":"Kenneth","audio_status":{"is_muted":false}}],"count":1}))
+    status[:participants] = roster_before
     result = exec(:mute_participant_audio, 16782336, true)
 
     expect_http_request do |request, response|
@@ -1244,9 +1246,12 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
 
     result.get.should eq(JSON.parse(%({"room_id":"room-1","user_id":16782336,"mute":true,"result":0,"success":true})))
+    status[:participants].should eq(roster_before)
   end
 
   it "unmutes a participant's video via the wrapper's mute-user route" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16782336,"user_name":"Kenneth","video_status":{"sending":false}}],"count":1}))
+    status[:participants] = roster_before
     result = exec(:mute_participant_video, 16782336, false)
 
     expect_http_request do |request, response|
@@ -1259,6 +1264,7 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
 
     result.get.should eq(JSON.parse(%({"room_id":"room-1","user_id":16782336,"mute":false,"result":0,"success":true})))
+    status[:participants].should eq(roster_before)
   end
 
   it "expels in-meeting participants via expel-multiple, returning the ack without touching status" do
