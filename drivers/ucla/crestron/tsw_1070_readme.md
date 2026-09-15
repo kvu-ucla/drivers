@@ -29,9 +29,9 @@ Crestron TSW-70 series touch panel over its HTTPS JSON API (requires firmware 3.
 
 | Method | Arguments | Description / returns |
 |---|---|---|
-| `device_info` | — | Fetches `/Device/DeviceInfo`, publishes `device_info_raw`, and returns the `Descriptor`. Infallible: failures serve the last good descriptor or an honest static fallback (`Crestron` / `TSW-1070` / configured host). |
-| `authenticate` | `lifecycle : Bool = true` — `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
-| `logout` | — | Ends the session and disconnects. Returns `Bool` (success). |
+| `device_info` | - | Fetches `/Device/DeviceInfo`, publishes `device_info_raw`, and returns the `Descriptor`. Infallible: failures serve the last good descriptor or an honest static fallback (`Crestron` / `TSW-1070` / configured host). |
+| `authenticate` | `lifecycle : Bool = true` - `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
+| `logout` | - | Ends the session and disconnects. Returns `Bool` (success). |
 
 ## 2.0.1 (2026-09-08)
 

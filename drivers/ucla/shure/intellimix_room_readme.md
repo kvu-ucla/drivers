@@ -27,24 +27,24 @@ Status keys are derived from `< REP … >` responses:
 
 | Method | Arguments | Description / returns |
 |---|---|---|
-| `query_device_identity` | — | One-shot `GET MODEL` / `GET FW_VER` / `GET DEVICE_ID` (also run on connect). |
-| `get_all` | — | Full state dump (`GET ALL`). |
-| `device_info` | — | Descriptor from cached status: make `Shure`, model with `IntelliMix Room` fallback, serial (`serial_num`), firmware (`fw_ver`), configured IP. |
-| `get_preset` / `set_preset` | `number : Int32` — preset number (zero-padded to 2 digits on the wire) | Preset recall. |
-| `get_device_audio_mute` / `set_device_audio_mute` | `mute : Bool` — `true` mutes / `false` unmutes | Device-wide audio mute. |
-| `get_audio_mute` / `set_audio_mute` | `index : Int32` — channel (zero-padded to 2 digits); `mute : Bool` | Per-channel mute. |
-| `get_audio_gain_hi_res` / `set_audio_gain_hi_res` | `index : Int32` — channel; `value : Int32` — gain value (no driver-side range check) | Per-channel high-resolution gain. |
+| `query_device_identity` | - | One-shot `GET MODEL` / `GET FW_VER` / `GET DEVICE_ID` (also run on connect). |
+| `get_all` | - | Full state dump (`GET ALL`). |
+| `device_info` | - | Descriptor from cached status: make `Shure`, model with `IntelliMix Room` fallback, serial (`serial_num`), firmware (`fw_ver`), configured IP. |
+| `get_preset` / `set_preset` | `number : Int32` - preset number (zero-padded to 2 digits on the wire) | Preset recall. |
+| `get_device_audio_mute` / `set_device_audio_mute` | `mute : Bool` - `true` mutes / `false` unmutes | Device-wide audio mute. |
+| `get_audio_mute` / `set_audio_mute` | `index : Int32` - channel (zero-padded to 2 digits); `mute : Bool` | Per-channel mute. |
+| `get_audio_gain_hi_res` / `set_audio_gain_hi_res` | `index : Int32` - channel; `value : Int32` - gain value (no driver-side range check) | Per-channel high-resolution gain. |
 | `get_audio_gain_postgate` / `set_audio_gain_postgate` | `index : Int32`; `gain : Int32` | Post-gate gain. |
 | `get_automxr_mute` / `set_automxr_mute` | `index : Int32`; `mute : Bool` | Automixer per-channel mute. |
 | `get_automxr_gate` | `index : Int32` | Automixer gate state. |
 | `get_matrix_mxr_route` / `set_matrix_mxr_route` | `input : Int32`; `output : Int32`; `enabled : Bool` | Matrix routing. |
 | `get_matrix_mxr_gain` / `set_matrix_mxr_gain` | `input : Int32`; `output : Int32`; `gain : Int32` | Matrix gain. |
 | `get_denoiser_enable` / `set_denoiser_enable` | `index : Int32`; `enable : Bool` | Denoiser on/off. |
-| `get_denoiser_level` / `set_denoiser_level` | `index : Int32`; `level : String` — `"LOW"`, `"MEDIUM"`, or `"HIGH"` | Denoiser strength. |
+| `get_denoiser_level` / `set_denoiser_level` | `index : Int32`; `level : String` - `"LOW"`, `"MEDIUM"`, or `"HIGH"` | Denoiser strength. |
 | `get_onhook_enable` / `set_onhook_enable` | `enable : Bool` | On-hook behaviour. |
-| `get_na_device_name` / `get_chan_config` / `get_chan_count` | — | Device/channel queries. |
-| `get_lic_exp_date` / `get_lic_type` / `get_lic_valid` | — | Licensing queries. |
-| `mute` | `state : Bool = true`; `index : Int32 \| String = 0` (unused); `layer : MuteLayer = AudioVideo` — audio/audio-video layers map to `set_device_audio_mute`; video is ignored | Muteable interface. |
+| `get_na_device_name` / `get_chan_config` / `get_chan_count` | - | Device/channel queries. |
+| `get_lic_exp_date` / `get_lic_type` / `get_lic_valid` | - | Licensing queries. |
+| `mute` | `state : Bool = true`; `index : Int32 \| String = 0` (unused); `layer : MuteLayer = AudioVideo` - audio/audio-video layers map to `set_device_audio_mute`; video is ignored | Muteable interface. |
 
 ## 2.0.2 (2026-09-08)
 

@@ -32,13 +32,13 @@ Crestron occupancy sensor (e.g. CEN-ODT family) over HTTPS. The device has no we
 
 | Method | Arguments | Description / returns |
 |---|---|---|
-| `poll_device_state` | — | One full `/Device` fetch serving both paths: identity is mapped and cached **first**, then occupancy is updated (so the exported sensor detail carries real mac/name). |
-| `device_info` | — | Identity only — fetch, map, cache; never mutates occupancy. Serves cached/static details on failure. Returns `Descriptor`. |
-| `sensors` | `type : String? = nil` — sensor type name; only the presence type is served; `mac : String? = nil` — filter by MAC; `zone_id : String? = nil` — unused | Sensor-interface listing. Returns `Array(Interface::Sensor::Detail)` — empty unless occupancy has been observed (and, when `mac` is given, it matches the device). |
-| `sensor` | `mac : String` — device MAC; `id : String? = nil` — unused | Single sensor lookup. Returns `Interface::Sensor::Detail?` (`nil` unless `mac` matches and occupancy has been observed). |
-| `get_sensor_details` | — | Returns the current sensor detail record (`Interface::Sensor::Detail?`). |
-| `authenticate` | `lifecycle : Bool = true` — `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
-| `logout` | — | Ends the session and disconnects. Returns `Bool` (success). |
+| `poll_device_state` | - | One full `/Device` fetch serving both paths: identity is mapped and cached **first**, then occupancy is updated (so the exported sensor detail carries real mac/name). |
+| `device_info` | - | Identity only - fetch, map, cache; never mutates occupancy. Serves cached/static details on failure. Returns `Descriptor`. |
+| `sensors` | `type : String? = nil` - sensor type name; only the presence type is served; `mac : String? = nil` - filter by MAC; `zone_id : String? = nil` - unused | Sensor-interface listing. Returns `Array(Interface::Sensor::Detail)` - empty unless occupancy has been observed (and, when `mac` is given, it matches the device). |
+| `sensor` | `mac : String` - device MAC; `id : String? = nil` - unused | Single sensor lookup. Returns `Interface::Sensor::Detail?` (`nil` unless `mac` matches and occupancy has been observed). |
+| `get_sensor_details` | - | Returns the current sensor detail record (`Interface::Sensor::Detail?`). |
+| `authenticate` | `lifecycle : Bool = true` - `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
+| `logout` | - | Ends the session and disconnects. Returns `Bool` (success). |
 
 ## 2.0.1 (2026-09-08)
 

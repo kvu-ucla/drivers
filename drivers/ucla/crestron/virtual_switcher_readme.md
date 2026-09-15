@@ -34,10 +34,10 @@ Intent/actual divergence logs a warning (only for outputs that have a recorded i
 
 | Method | Arguments | Description / returns |
 |---|---|---|
-| `switch_to` | `input : String` — friendly input name; blank values `none`/`break`/`clear`/`blank`/`black`/`0` blank | Routes the input to **all** configured outputs. |
-| `switch` | `map : Hash(String, Array(Int32 \| String))` — input ⇒ outputs; `layer : "All"\|"Video"\|"Audio"? = nil` (defaults to All) | Routes `{input => [outputs]}` per layer. Blank inputs: `none`, `break`, `clear`, `blank`, `black`, `0`. |
-| `mute` | `state : Bool = true` — only `true` supported (mute-only); `index : Int32 \| String = 0` — output name or legacy `Decoder_<n>` index; `layer : "Audio"\|"Video"\|"AudioVideo" = AudioVideo` | Blanks the given output on the mapped layer (no unmute). |
-| `available_inputs` / `available_outputs` | — | Configured friendly names. |
+| `switch_to` | `input : String` - friendly input name; blank values `none`/`break`/`clear`/`blank`/`black`/`0` blank | Routes the input to **all** configured outputs. |
+| `switch` | `map : Hash(String, Array(Int32 \| String))` - input ⇒ outputs; `layer : "All"\|"Video"\|"Audio"? = nil` (defaults to All) | Routes `{input => [outputs]}` per layer. Blank inputs: `none`, `break`, `clear`, `blank`, `black`, `0`. |
+| `mute` | `state : Bool = true` - only `true` supported (mute-only); `index : Int32 \| String = 0` - output name or legacy `Decoder_<n>` index; `layer : "Audio"\|"Video"\|"AudioVideo" = AudioVideo` | Blanks the given output on the mapped layer (no unmute). |
+| `available_inputs` / `available_outputs` | - | Configured friendly names. |
 | `power` | `state : Bool` | No-op stub to suppress errors in routing logic. |
 
 ## 2.0.1 (2026-09-08)

@@ -38,23 +38,23 @@ Controls Epiphan Pearl-2 and Pearl Mini recording/streaming devices over their H
 |---|---|---|
 | `start_recording` / `stop_recording` | `recorder_id : String` | Recording control (status re-queried 2 s later). |
 | `pause_recording` / `resume_recording` | `recorder_id : String` | Pause/resume. |
-| `stop_all_recordings` | — | Stops every active recorder; returns per-recorder success. |
-| `is_recording?` | `recorder_id : String` | Returns `Bool` — `true` when the recorder state is `Started`. |
-| `get_active_recordings` / `list_recorders` | — | Recorder queries. |
+| `stop_all_recordings` | - | Stops every active recorder; returns per-recorder success. |
+| `is_recording?` | `recorder_id : String` | Returns `Bool` - `true` when the recorder state is `Started`. |
+| `get_active_recordings` / `list_recorders` | - | Recorder queries. |
 | `get_recorder_status` | `recorder_id : String` | Returns the recorder status. |
 | `start_streaming` / `stop_streaming` | `channel_id : String`; `publisher_id : String` | Publisher control. |
-| `is_streaming?` | `channel_id : String` | Returns `Bool` — `true` when the channel has an active streaming publisher. |
-| `get_active_streamings` | — | Returns `{channel_id, publisher_ids}` entries currently streaming. |
+| `is_streaming?` | `channel_id : String` | Returns `Bool` - `true` when the channel has an active streaming publisher. |
+| `get_active_streamings` | - | Returns `{channel_id, publisher_ids}` entries currently streaming. |
 | `list_publishers` | `channel_id : String` | Lists the channel's publishers. |
-| `list_channels` | — | Lists configured channels. |
+| `list_channels` | - | Lists configured channels. |
 | `get_channel_layouts` | `channel_id : String` | Lists the channel's layouts. |
 | `set_channel_layout` | `channel_id : String`; `layout_id : String` | Applies a layout; re-queries layouts 2 s later. Returns `true`. |
-| `get_system_status` | — | Device system status. |
-| `get_inputs_status` | `type : String? = nil` — optional `?types=` filter | Input status; publishes `<input_id>_video_status`. |
-| `get_connectivity_details` | — | Connectivity check result. |
-| `get_firmware` | — | Firmware details (publishes `firmware`). |
-| `device_info` | — | Returns the `Descriptor` (firmware fetch with rescued degradation). |
-| `init_camera_map` | — | Re-reads the `camera_map` setting. |
+| `get_system_status` | - | Device system status. |
+| `get_inputs_status` | `type : String? = nil` - optional `?types=` filter | Input status; publishes `<input_id>_video_status`. |
+| `get_connectivity_details` | - | Connectivity check result. |
+| `get_firmware` | - | Firmware details (publishes `firmware`). |
+| `device_info` | - | Returns the `Descriptor` (firmware fetch with rescued degradation). |
+| `init_camera_map` | - | Re-reads the `camera_map` setting. |
 
 ## 2.0.1 (2026-09-08)
 

@@ -74,45 +74,45 @@ The `Default` column reproduces the value declared in `default_settings`; where 
 
 | Method | Arguments | Description / returns |
 |---|---|---|
-| `power` | `state : Bool` — `true` on / `false` off; `unlink : Bool = false` — also unlink joined rooms on shutdown | Room power. Startup applies audio/camera/route/mic defaults and runs `startup_exec`; shutdown mutes, unroutes, powers devices off, hangs up VC and runs `shutdown_exec`. Returns `state`. |
+| `power` | `state : Bool` - `true` on / `false` off; `unlink : Bool = false` - also unlink joined rooms on shutdown | Room power. Startup applies audio/camera/route/mic defaults and runs `startup_exec`; shutdown mutes, unroutes, powers devices off, hangs up VC and runs `shutdown_exec`. Returns `state`. |
 | `set_power_state` | `state : Bool` | Alias for `power(state)`. |
-| `power?` | — | Returns `Bool` — current room power state. |
+| `power?` | - | Returns `Bool` - current room power state. |
 | `route_input` | `input_id : String`; `output_id : String` | Route a source to a display (powers the room on; join-aware). |
-| `route` | `input : String` — `"MUTE"` blanks; `output : String`; `max_dist : Int32? = nil`; `simulate : Bool = false`; `follow_additional_routes : Bool = true`; `called_from_join : Bool = false` (advanced) | Route a source to a display. |
+| `route` | `input : String` - `"MUTE"` blanks; `output : String`; `max_dist : Int32? = nil`; `simulate : Bool = false`; `follow_additional_routes : Bool = true`; `called_from_join : Bool = false` (advanced) | Route a source to a display. |
 | `route_all` | `input_id : String` | Present to all displays. |
 | `unroute` | `output : String` | Blank one display (routes `MUTE`). |
-| `unroute_all` | — | Blank all displays. |
-| `inputs_and_outputs` | — | Lists routable ids with display names (LLM helper). |
+| `unroute_all` | - | Blank all displays. |
+| `inputs_and_outputs` | - | Lists routable ids with display names (LLM helper). |
 | `selected_input` | `name : String`; `simulate : Bool = false` | Sets the selected input/tab, powers the source, routes previews. |
-| `apply_default_routes` | — | Re-applies `default_routes`. |
-| `set_volume` | `level : Int32 \| Float64` — 0–100 | Master volume (mapped into the configured fader range); `0` mutes. Returns a status string. |
-| `volume` | `level : Int32 \| Float64` — 0–100; `input_or_output : String`; `push_to_remotes : Bool = true` | Sets master volume (or node volume), optionally pushed to joined rooms. |
-| `volume?` | — | Returns `Float64` — current volume (0–100). |
-| `audio_mute` | `state : Bool` — `true` mute / `false` unmute | Master mute. Returns a status string. |
-| `audio_muted?` | — | Returns `Bool` — master mute state. |
+| `apply_default_routes` | - | Re-applies `default_routes`. |
+| `set_volume` | `level : Int32 \| Float64` - 0–100 | Master volume (mapped into the configured fader range); `0` mutes. Returns a status string. |
+| `volume` | `level : Int32 \| Float64` - 0–100; `input_or_output : String`; `push_to_remotes : Bool = true` | Sets master volume (or node volume), optionally pushed to joined rooms. |
+| `volume?` | - | Returns `Float64` - current volume (0–100). |
+| `audio_mute` | `state : Bool` - `true` mute / `false` unmute | Master mute. Returns a status string. |
+| `audio_muted?` | - | Returns `Bool` - master mute state. |
 | `mute` | `state : Bool = true`; `index : Int32 \| String = 0` (unused); `layer : MuteLayer = AudioVideo` (unused) | Master mute (Muteable interface). |
-| `set_microphone` | `level : Float64` — 0–100; `mute : Bool = false` | Sets level/mute on all local mics. |
+| `set_microphone` | `level : Float64` - 0–100; `mute : Bool = false` | Sets level/mute on all local mics. |
 | `mute_microphones` | `mute : Bool = true` | Mute/unmute all local mics. |
-| `microphone_volume` | `name : String`; `level : Float64` — 0–100 | Set a named mic's level. |
+| `microphone_volume` | `name : String`; `level : Float64` - 0–100 | Set a named mic's level. |
 | `microphone_mute` | `name : String`; `mute : Bool = true` | Mute/unmute a named mic. |
 | `mic_room_selection` | `mic_name : String`; `room_name : String`; `selected : Bool` | Routes/unroutes a shared mic into a room. |
-| `select_lighting_scene` | `scene : String` — scene name; `push_to_remotes : Bool = true` | Select a lighting scene. |
-| `set_lighting_scene` | `scene : String` — scene name | Validates and selects a lighting scene. |
-| `lighting_scenes` | — | Returns the available scene names. |
-| `lighting_scene?` | — | Returns the current scene. |
+| `select_lighting_scene` | `scene : String` - scene name; `push_to_remotes : Bool = true` | Select a lighting scene. |
+| `set_lighting_scene` | `scene : String` - scene name | Validates and selects a lighting scene. |
+| `lighting_scenes` | - | Returns the available scene names. |
+| `lighting_scene?` | - | Returns the current scene. |
 | `accessory_exec` | `accessory : String`; `control : String` | Runs an accessory control (executes on the room it came from when joined). Returns `Bool`. |
 | `selected_camera` | `camera : String` | Select a VC camera (routes it and powers it on). |
-| `apply_camera_defaults` | — | Powers camera modules on (run on power-on). |
+| `apply_camera_defaults` | - | Powers camera modules on (run on power-on). |
 | `add_preset` | `preset : String`; `camera : String` | Save a camera preset. |
 | `remove_preset` | `preset : String`; `camera : String` | Remove a camera preset. |
 | `join_mode` | `mode_id : String`; `master : Bool = true` | Select a join mode. |
-| `unlink_systems` | — | Unlink joined rooms. |
-| `unlink_internal_use` | — | Clear local join state. |
-| `linked?` | — | Returns `Bool` — whether this room is part of the current join. |
-| `qsc_dial_pad` | `number : String` — `0`–`9`, `*`, `#`; `\b` deletes the last digit | Appends a dial-pad digit. |
-| `qsc_dial_pad_clear` | — | Clears the dial string. |
-| `qsc_dial_makecall` | — | Places the call. |
-| `qsc_dial_hangup` | — | Hangs up. |
+| `unlink_systems` | - | Unlink joined rooms. |
+| `unlink_internal_use` | - | Clear local join state. |
+| `linked?` | - | Returns `Bool` - whether this room is part of the current join. |
+| `qsc_dial_pad` | `number : String` - `0`–`9`, `*`, `#`; `\b` deletes the last digit | Appends a dial-pad digit. |
+| `qsc_dial_pad_clear` | - | Clears the dial string. |
+| `qsc_dial_makecall` | - | Places the call. |
+| `qsc_dial_hangup` | - | Hangs up. |
 
 ---
 

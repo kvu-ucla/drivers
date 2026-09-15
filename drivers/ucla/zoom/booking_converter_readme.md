@@ -43,7 +43,7 @@ UCLA ZRC room calendars contain **only Zoom meetings**. An entry without a top-l
 
 ## Exec methods
 
-None — the driver is configuration/subscription-driven: it reacts to the configured `booking_source` status and the per-minute cron; there are no exec-callable methods.
+None - the driver is configuration/subscription-driven: it reacts to the configured `booking_source` status and the per-minute cron; there are no exec-callable methods.
 
 ## 1.0.1 (2026-09-08)
 

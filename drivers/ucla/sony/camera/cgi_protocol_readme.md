@@ -39,25 +39,25 @@ Controls Sony PTZ cameras over the HTTP CGI command protocol with digest authent
 | Method | Arguments | Description / returns |
 |---|---|---|
 | `query_status` | `priority : Int32 = 0` | PTZF inquiry (also polls autoframing and power); returns the PTZF task so `exec(...).get` resolves with PTZ state. |
-| `info?` | — | Manual `inq=system` identity inquiry (publishes the legacy identity keys). |
-| `device_info` | — | Descriptor from a direct system inquiry: make `Sony`, `ModelName` with `Camera` fallback, serial, firmware (`SoftVersion`), MAC, configured host. Also republishes the legacy identity keys. |
-| `move` | `position : String` — `Up`/`Down`/`Left`/`Right` (4-way), `In`/`Out` (zoom); `index : Int32 \| String = 0` — camera index, 1-based | Directional movement. |
-| `move_all` | `position : String` — `Up`, `Down`, `Left`, `Right`, `UpLeft`, `UpRight`, `DownLeft`, `DownRight`, `Tele`, `Wide`; `index : Int32 \| String = 0` | 8-way + Tele/Wide movement. |
-| `joystick` | `pan_speed : Float64` — −100…100; `tilt_speed : Float64` — −100…100; `index : Int32 \| String = 0` | Proportional movement; `0`/`0` stops. |
-| `stop` | `index : Int32 \| String = 0` — camera index; `emergency : Bool = false` — clears the queue | Stop motion. |
-| `stop_zoom` | — | Stop zoom. |
-| `pantilt` | `pan : Int32`; `tilt : Int32`; `zoom : Int32? = nil`; `focus : Int32? = nil` — values clamped to reported ranges | Absolute positioning. |
-| `zoom` | `direction : String` — `In`/`Out`/`Stop`; `index : Int32 \| String = 0` | Relative zoom. |
-| `zoom_to` | `position : Float64` — 0–100 %; `auto_focus : Bool = true`; `index : Int32 \| String = 0` | Absolute zoom (0–100 %). |
-| `home` | — | Recalls the camera home position. |
-| `recall` | `position : String` — preset name; `index : Int32 \| String = 0` | Recalls a driver-side preset. |
+| `info?` | - | Manual `inq=system` identity inquiry (publishes the legacy identity keys). |
+| `device_info` | - | Descriptor from a direct system inquiry: make `Sony`, `ModelName` with `Camera` fallback, serial, firmware (`SoftVersion`), MAC, configured host. Also republishes the legacy identity keys. |
+| `move` | `position : String` - `Up`/`Down`/`Left`/`Right` (4-way), `In`/`Out` (zoom); `index : Int32 \| String = 0` - camera index, 1-based | Directional movement. |
+| `move_all` | `position : String` - `Up`, `Down`, `Left`, `Right`, `UpLeft`, `UpRight`, `DownLeft`, `DownRight`, `Tele`, `Wide`; `index : Int32 \| String = 0` | 8-way + Tele/Wide movement. |
+| `joystick` | `pan_speed : Float64` - −100…100; `tilt_speed : Float64` - −100…100; `index : Int32 \| String = 0` | Proportional movement; `0`/`0` stops. |
+| `stop` | `index : Int32 \| String = 0` - camera index; `emergency : Bool = false` - clears the queue | Stop motion. |
+| `stop_zoom` | - | Stop zoom. |
+| `pantilt` | `pan : Int32`; `tilt : Int32`; `zoom : Int32? = nil`; `focus : Int32? = nil` - values clamped to reported ranges | Absolute positioning. |
+| `zoom` | `direction : String` - `In`/`Out`/`Stop`; `index : Int32 \| String = 0` | Relative zoom. |
+| `zoom_to` | `position : Float64` - 0–100 %; `auto_focus : Bool = true`; `index : Int32 \| String = 0` | Absolute zoom (0–100 %). |
+| `home` | - | Recalls the camera home position. |
+| `recall` | `position : String` - preset name; `index : Int32 \| String = 0` | Recalls a driver-side preset. |
 | `save_position` | `name : String`; `index : Int32 \| String = 0` | Saves a driver-side preset (persisted to settings). |
 | `remove_position` | `name : String`; `index : Int32 \| String = 0` | Removes a driver-side preset. |
 | `cam_preset_save` / `cam_preset_recall` | `preset_no : Int32` | Camera-side presets. |
-| `autoframe` | `state : Bool` — `true` on / `false` off | PTZ autoframing control. |
-| `autoframing?` | — | Queries autoframing state. |
-| `power` | `state : Bool` — `true` on / `false` standby | On/standby control. |
-| `power?` | — | Queries power state. |
+| `autoframe` | `state : Bool` - `true` on / `false` off | PTZ autoframing control. |
+| `autoframing?` | - | Queries autoframing state. |
+| `power` | `state : Bool` - `true` on / `false` standby | On/standby control. |
+| `power?` | - | Queries power state. |
 
 ## 2.0.1 (2026-09-08)
 
