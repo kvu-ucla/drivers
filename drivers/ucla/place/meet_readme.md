@@ -79,7 +79,7 @@ The `Default` column reproduces the value declared in `default_settings`; where 
 | `power?` | - | Returns `Bool` - current room power state. |
 | `route_input` | `input_id : String`; `output_id : String` | Route a source to a display (powers the room on; join-aware). |
 | `route` | `input : String` - `"MUTE"` blanks; `output : String`; `max_dist : Int32? = nil`; `simulate : Bool = false`; `follow_additional_routes : Bool = true`; `called_from_join : Bool = false` (advanced) | Route a source to a display. |
-| `route_all` | `input_id : String` | Present to all displays. |
+| `route_all` | `input_id : String` | Present input corresponding to `input_id` to all displays. |
 | `unroute` | `output : String` | Blank one display (routes `MUTE`). |
 | `unroute_all` | - | Blank all displays. |
 | `inputs_and_outputs` | - | Lists routable ids with display names (LLM helper). |
