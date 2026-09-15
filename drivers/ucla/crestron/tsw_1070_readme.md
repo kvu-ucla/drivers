@@ -1,6 +1,6 @@
 # Crestron TSW-1070 Touch Screen (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/tsw_1070.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18). Shares `cres_next_auth.cr` with the NVX and occupancy-sensor drivers.
 
@@ -27,10 +27,15 @@ Crestron TSW-70 series touch panel over its HTTPS JSON API (requires firmware 3.
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `device_info` | Fetches `/Device/DeviceInfo`, publishes `device_info_raw`, and returns the descriptor. Infallible: failures serve the last good descriptor or an honest static fallback (`Crestron` / `TSW-1070` / configured host). |
-| `authenticate` / `logout` | Session management (shared auth module). |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `device_info` | - | Fetches `/Device/DeviceInfo`, publishes `device_info_raw`, and returns the `Descriptor`. Infallible: failures serve the last good descriptor or an honest static fallback (`Crestron` / `TSW-1070` / configured host). |
+| `authenticate` | `lifecycle : Bool = true` - `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
+| `logout` | - | Ends the session and disconnects. Returns `Bool` (success). |
+
+## 2.0.1 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types and return types (no code change).
 
 ## 2.0.0 (2026-08-31)
 

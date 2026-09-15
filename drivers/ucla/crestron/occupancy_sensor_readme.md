@@ -1,6 +1,6 @@
 # Crestron Occupancy Sensor (UCLA)
 
-**Version:** 2.0.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/occupancy_sensor.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18). Shares `cres_next_auth.cr` with the NVX and TSW drivers.
 
@@ -30,14 +30,19 @@ Crestron occupancy sensor (e.g. CEN-ODT family) over HTTPS. The device has no we
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `poll_device_state` | One full `/Device` fetch serving both paths: identity is mapped and cached **first**, then occupancy is updated (so the exported sensor detail carries real mac/name). |
-| `device_info` | Identity only — fetch, map, cache; never mutates occupancy. Serves cached/static details on failure. |
-| `sensors(type, mac, zone_id)` | Sensor-interface listing (presence type only). |
-| `sensor(mac, id)` | Single sensor lookup. |
-| `get_sensor_details` | Returns the current sensor detail record. |
-| `authenticate` / `logout` | Session management (shared auth module). |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `poll_device_state` | - | One full `/Device` fetch serving both paths: identity is mapped and cached **first**, then occupancy is updated (so the exported sensor detail carries real mac/name). |
+| `device_info` | - | Identity only - fetch, map, cache; never mutates occupancy. Serves cached/static details on failure. Returns `Descriptor`. |
+| `sensors` | `type : String? = nil` - sensor type name; only the presence type is served; `mac : String? = nil` - filter by MAC; `zone_id : String? = nil` - unused | Sensor-interface listing. Returns `Array(Interface::Sensor::Detail)` - empty unless occupancy has been observed (and, when `mac` is given, it matches the device). |
+| `sensor` | `mac : String` - device MAC; `id : String? = nil` - unused | Single sensor lookup. Returns `Interface::Sensor::Detail?` (`nil` unless `mac` matches and occupancy has been observed). |
+| `get_sensor_details` | - | Returns the current sensor detail record (`Interface::Sensor::Detail?`). |
+| `authenticate` | `lifecycle : Bool = true` - `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
+| `logout` | - | Ends the session and disconnects. Returns `Bool` (success). |
+
+## 2.0.1 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and return types (no code change).
 
 ## 2.0.0 (2026-08-31)
 

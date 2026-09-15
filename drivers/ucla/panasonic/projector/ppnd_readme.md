@@ -1,6 +1,6 @@
 # Panasonic Projector PPND API (UCLA)
 
-**Version:** 2.1.0 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.1.1 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/panasonic/projector/ppnd.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18).
 
@@ -35,21 +35,31 @@ Controls Panasonic projectors via the PPND WEB API (`https://<host>/api/v1/`, JS
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `power(state)` / `power?` / `query_power_status` | Power control with target re-assertion. |
-| `switch_to(input)` | Inputs: `COMPUTER`, `HDMI` (maps to HDMI1), `HDMI1`, `HDMI2`, `MemoryViewer`, `Network`, `DigitalLink`. |
-| `query_input_status` | Re-reads the input (re-asserts a pending target). |
-| `mute(state, index, layer)` / `query_av_mute_status` | AV shutter control. |
-| `freeze(state)` / `query_freeze_status` | Image freeze (projector must be on). |
-| `query_errors` / `query_lights` / `query_temperatures` | Status queries (also run by the 30-second poll, alongside power/input/av-mute). |
-| `query_signal` | On-demand signal query — **not** part of the recurring poll; `signal_info`/`no_signal` only update when this is called explicitly. |
-| `query_device_info` / `query_firmware_version` | Identity queries. |
-| `query_operating_mode` / `operating_mode(mode)` | Operating mode (`Normal`, `Eco`, `Quiet`, `User1`–`User3`). |
-| `query_device_schedule` | Device schedule. |
-| `configure_ntp(sync, server)` / `query_ntp_settings` | NTP configuration. |
-| `configure_https(enabled)` / `query_https_config` | HTTPS configuration. |
-| `device_info` | Descriptor from cached identity: make `Panasonic`, model with `Projector` fallback, serial, MAC, configured host, projector name as hostname. |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `power` | `state : Bool` - `true` = on, `false` = standby | Power control with target re-assertion. |
+| `power?` / `query_power_status` | - | Queries power (re-asserts a pending target). |
+| `switch_to` | `input : String` - `COMPUTER`, `HDMI` (maps to HDMI1), `HDMI1`, `HDMI2`, `MemoryViewer`, `Network`, `DigitalLink` | Input selection; opens the shutter first when `av_mute` is on. |
+| `query_input_status` | - | Re-reads the input (re-asserts a pending target). |
+| `mute` | `state : Bool = true` - `true` closes / `false` opens the shutter; `index : Int32 \| String = 0` (unused); `layer : MuteLayer = AudioVideo` (unused) | AV shutter control. |
+| `query_av_mute_status` | - | Re-reads shutter state. |
+| `freeze` | `state : Bool` - `true` freezes / `false` unfreezes | Image freeze (projector must be on). |
+| `query_freeze_status` | - | Re-reads freeze state. |
+| `query_errors` / `query_lights` / `query_temperatures` | - | Status queries (also run by the 30-second poll, alongside power/input/av-mute). |
+| `query_signal` | - | On-demand signal query — **not** part of the recurring poll; `signal_info`/`no_signal` only update when this is called explicitly. |
+| `query_device_info` / `query_firmware_version` | - | Identity queries. |
+| `query_operating_mode` | - | Reads the operating mode. |
+| `operating_mode` | `mode : String` - `"Normal"`, `"Eco"`, `"Quiet"`, `"User1"`–`"User3"` | Sets the operating mode. |
+| `query_device_schedule` | - | Device schedule. |
+| `configure_ntp` | `sync : Bool` - `true` = NTP sync on; `server : String` - NTP server | NTP configuration. |
+| `query_ntp_settings` | - | Reads NTP settings. |
+| `configure_https` | `enabled : Bool` - `true` enables / `false` disables | HTTPS configuration. |
+| `query_https_config` | - | Reads HTTPS configuration. |
+| `device_info` | - | Descriptor from cached identity: make `Panasonic`, model with `Projector` fallback, serial, MAC, configured host, projector name as hostname. |
+
+## 2.1.1 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.1.0 (2026-09-01)
 

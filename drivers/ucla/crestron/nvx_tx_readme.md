@@ -1,6 +1,6 @@
 # Crestron NVX Transmitter (UCLA)
 
-**Version:** 2.0.1 — the UCLA-maintained line diverging from upstream.
+**Version:** 2.0.2 — the UCLA-maintained line diverging from upstream.
 
 > UCLA-maintained copy of `drivers/crestron/nvx_tx.cr` (vendored 2026-08-30 from ucla-dev @ ce19af2a18). Built on the shared UCLA `cres_next.cr` / `cres_next_auth.cr` base.
 
@@ -19,8 +19,8 @@ The driver publishes the stream advertisement (`stream_location`, the RTSP URI) 
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `username` | String | — (required) | Device login, read by the shared `authenticate`. |
-| `password` | String | — (required) | Device login password. |
+| `username` | String | - (required) | Device login, read by the shared `authenticate`. |
+| `password` | String | - (required) | Device login password. |
 
 ## Status keys
 
@@ -39,18 +39,23 @@ The driver publishes the stream advertisement (`stream_location`, the RTSP URI) 
 
 ## Exec methods
 
-| Method | Description |
-|---|---|
-| `switch_to(input)` | Selects the local video input (`None`/`Input1`/`Input2`), audio follows video. |
-| `output(state)` | Enables/disables HDMI output sync. |
-| `multicast_address(address)` | Sets the stream multicast address. |
-| `stream_start` / `stream_stop` | POSTs `[{Start: true}]` / `[{Stop: true}]` to `/StreamTransmit/Streams`. |
-| `emulate_input_sync(state, idx)` | Manually sets `input_<idx>_sync` (testing aid). |
-| `device_info` | Fetches/serves the descriptor (see base behaviour above). |
-| `maintain_session` | Failure-isolated login refresh (also on a 10-minute schedule). |
-| `authenticate` / `logout` | Session management (shared auth module). |
-| `manual_send(payload)` | Sends a raw websocket payload (Support level). |
-| `reboot(now)` | Reboots the device (Administrator level). |
+| Method | Arguments | Description / returns |
+|---|---|---|
+| `switch_to` | `input : String` - `"None"`, `"Input1"`, or `"Input2"` | Selects the local video input; audio follows video. |
+| `output` | `state : Bool` - `true` enables / `false` disables | HDMI output sync enable/disable. |
+| `multicast_address` | `address : String` - multicast address | Sets the stream multicast address. |
+| `stream_start` / `stream_stop` | - | POSTs `[{Start: true}]` / `[{Stop: true}]` to `/StreamTransmit/Streams`. |
+| `emulate_input_sync` | `state : Bool = true`; `idx : Int32 = 1` | Manually sets `input_<idx>_sync` (testing aid). |
+| `device_info` | - | Fetches/serves the `Descriptor` (see base behaviour above). |
+| `maintain_session` | - | Failure-isolated login refresh (also on a 10-minute schedule). |
+| `authenticate` | `lifecycle : Bool = true` - `false` isolates a failed login from the connection lifecycle | Session login (shared auth module); publishes `authenticated` / `auth_error`. |
+| `logout` | - | Ends the session and disconnects. Returns `Bool` (success). |
+| `manual_send` | `payload : JSON::Any` - any JSON value (`String`/`Number`/`Bool`/`Object`/`Array`) | Sends a raw websocket payload (Support level). |
+| `reboot` | `now : Bool = false` - `false` sleeps a random 0–5 s first | Reboots the device (Administrator level). |
+
+## 2.0.2 (2026-09-08)
+
+- Documentation: Exec methods table now states argument types, allowed values, and defaults (no code change).
 
 ## 2.0.1 (2026-09-01)
 
