@@ -1231,6 +1231,68 @@ DriverSpecs.mock_driver "Zoom::ZRC::Controller" do
     end
   end
 
+  it "mutes a participant's audio via the wrapper's mute-user route" do
+    result = exec(:mute_participant_audio, 16782336, true)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/audio/mute-user")
+      request.query_params["user_id"].should eq("16782336")
+      request.query_params["mute"].should eq("true")
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_id":16782336,"mute":true,"result":0,"success":true})
+    end
+
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_id":16782336,"mute":true,"result":0,"success":true})))
+  end
+
+  it "unmutes a participant's video via the wrapper's mute-user route" do
+    result = exec(:mute_participant_video, 16782336, false)
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/video/mute-user")
+      request.query_params["user_id"].should eq("16782336")
+      request.query_params["mute"].should eq("false")
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_id":16782336,"mute":false,"result":0,"success":true})
+    end
+
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_id":16782336,"mute":false,"result":0,"success":true})))
+  end
+
+  it "expels in-meeting participants via expel-multiple, returning the ack without touching status" do
+    roster_before = JSON.parse(%({"participants":[{"user_id":16782336,"user_name":"Kenneth","is_in_waiting_room":false}],"count":1}))
+    status[:participants] = roster_before
+    result = exec(:expel, [16782336])
+
+    expect_http_request do |request, response|
+      request.method.should eq("POST")
+      request.path.should eq("/api/rooms/room-1/participants/expel-multiple")
+      body = JSON.parse(request.body.not_nil!)
+      body.should eq(JSON.parse(%({"user_ids":[16782336]})))
+      response.status_code = 200
+      response << %({"room_id":"room-1","user_ids":[16782336],"count":1,"result":0,"success":true})
+    end
+
+    result.get.should eq(JSON.parse(%({"room_id":"room-1","user_ids":[16782336],"count":1,"result":0,"success":true})))
+    status[:participants].should eq(roster_before)
+  end
+
+  it "rejects a failed participant-audio-mute ack" do
+    result = exec(:mute_participant_audio, 16782336, true)
+
+    expect_http_request do |request, response|
+      request.path.should eq("/api/rooms/room-1/audio/mute-user")
+      response.status_code = 200
+      response << %({"room_id":"room-1","result":11,"success":false})
+    end
+
+    expect_raises(PlaceOS::Driver::RemoteException, /mute participant audio failed/) do
+      result.get
+    end
+  end
+
   it "passes a non-hash participants payload through unchanged" do
     result = exec(:get_participants)
 

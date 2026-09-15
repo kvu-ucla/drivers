@@ -855,6 +855,39 @@ class Zoom::ZRC::Controller < PlaceOS::Driver
     parse_command_response(response, "send to waiting room")
   end
 
+  # Per-participant audio mute (host privilege; SDK MuteUserAudio). Same
+  # ack-only contract as the waiting-room verbs: the actual state change
+  # surfaces via OnMuteUserAudioNotification -> coalesced roster refetch.
+  def mute_participant_audio(user_id : Int32, mute : Bool = true) : JSON::Any
+    response = post(
+      "/api/rooms/#{@room_id}/audio/mute-user",
+      params: {"user_id" => user_id.to_s, "mute" => mute.to_s},
+      headers: JSON_HEADERS
+    )
+    parse_command_response(response, "#{mute ? "mute" : "unmute"} participant audio")
+  end
+
+  # Per-participant video mute (host privilege; SDK MuteUserVideo).
+  def mute_participant_video(user_id : Int32, mute : Bool = true) : JSON::Any
+    response = post(
+      "/api/rooms/#{@room_id}/video/mute-user",
+      params: {"user_id" => user_id.to_s, "mute" => mute.to_s},
+      headers: JSON_HEADERS
+    )
+    parse_command_response(response, "#{mute ? "mute" : "unmute"} participant video")
+  end
+
+  # Remove participants from the meeting (SDK ExpelUsers — the same wrapper
+  # route deny_from_waiting_room uses; expel acts on any participant, waiting
+  # or in-meeting). Kept separate so in-meeting callers aren't invoking a
+  # waiting-room-named method; deny_from_waiting_room is unchanged for
+  # existing consumers.
+  def expel(user_ids : Array(Int32)) : JSON::Any
+    body = {user_ids: user_ids}.to_json
+    response = post("/api/rooms/#{@room_id}/participants/expel-multiple", body: body, headers: JSON_HEADERS)
+    parse_command_response(response, "expel participants")
+  end
+
   # =========================================================
   # Utility
   # =========================================================
